@@ -10,8 +10,8 @@ Imports System.Web
 Imports System.Xml
 Imports System.Xml.XPath
 Imports HtmlAgilityPack
-
 Module Import
+    ' Module contains all import functions
     Sub ImportISO3166()
         ' Import ISO3166-1 country codes
         Dim sql As SqliteCommand, updated As Integer = 0
@@ -340,11 +340,10 @@ Module Import
         End Using
     End Function
 
-    Const IOTA_API_KEY = "Y3935PWYAQZYP3HVZ7QA"
     Async Function ImportIOTAGroups() As Task
         Dim responseString As String, sql As SqliteCommand
         ' Get JSON data for all IOTA groups
-        Dim url = $"https://www.iota-world.org/rest/get/iota/groups?api_key={IOTA_API_KEY}"
+        Dim url = $"https://www.iota-world.org/rest/get/iota/groups?api_key={secrets.IOTA_API_KEY}"
         Using httpClient As New System.Net.Http.HttpClient()
             httpClient.Timeout = New TimeSpan(0, 10, 0)        ' 10 min timeout
             Try
@@ -404,7 +403,7 @@ Module Import
     Async Function ImportIOTAIslands() As Task
         Dim responseString As String, sql As SqliteCommand
         ' Get JSON data for all IOTA groups
-        Dim url = $"https://www.iota-world.org/rest/get/iota/islands?api_key={IOTA_API_KEY}"
+        Dim url = $"https://www.iota-world.org/rest/get/iota/islands?api_key={secrets.IOTA_API_KEY}"
         Using httpClient As New System.Net.Http.HttpClient()
             httpClient.Timeout = New TimeSpan(0, 10, 0)        ' 10 min timeout
             Try
@@ -455,7 +454,7 @@ Module Import
     Async Function ImportIOTADXCCMatchesOneIOTA() As Task
         Dim responseString As String, sql As SqliteCommand
         ' Get JSON data for all IOTA groups
-        Dim url = $"https://www.iota-world.org/rest/get/iota/dxccmatchesoneiota?api_key={IOTA_API_KEY}"
+        Dim url = $"https://www.iota-world.org/rest/get/iota/dxccmatchesoneiota?api_key={secrets.IOTA_API_KEY}"
         Using httpClient As New System.Net.Http.HttpClient()
             httpClient.Timeout = New TimeSpan(0, 10, 0)        ' 10 min timeout
             Try
