@@ -2,6 +2,7 @@
 Imports Esri.ArcGISRuntime.Geometry
 Imports Microsoft.Data.Sqlite
 Module Validate
+    ' module contains all validate functions
     Sub CountryCollisions()
         ' Search for DXCC that intersect
         Dim sql As SqliteCommand, SQLdr As SqliteDataReader, theWorld As New List(Of (Entity As String, geom As Geometry)), overlaps As Integer = 0
