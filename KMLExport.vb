@@ -18,7 +18,7 @@ Imports System.Collections.Immutable
 Module KMLExport
 
     Const CoordsPerLine = 10          ' coordinates per line
-    Private prefixes As New List(Of (MapPoint, String))         ' prefixes for prefix folder
+    Private prefixes As New List(Of (p As MapPoint, pfx As String))         ' prefixes for prefix folder
     Sub KMLlist(connect As SqliteConnection, kml As StreamWriter, DXCClist As List(Of Integer))
         With Form1.ProgressBar1
             .Minimum = 0
@@ -136,9 +136,10 @@ Module KMLExport
         kml.WriteLine("<name>Prefixes</name>")
         kml.WriteLine("<description>A folder containing all prefix labels</description>")
         kml.WriteLine("<Style id=""prefix""><LabelStyle><color>ff00ffff</color><scale>5</scale></LabelStyle><IconStyle><Icon></Icon></IconStyle></Style>")    ' empty IconStyle required to display labels correctly (don't know why)
+        prefixes = prefixes.OrderBy(Function(a) a.pfx).ToList        ' sort prefix
         For Each prefix In prefixes
-            kml.Write($"<Placemark><name>{prefix.Item2}</name><styleUrl>#prefix</styleUrl><Point>")
-            KMLcoordinates(kml, prefix.Item1, 2)
+            kml.Write($"<Placemark><name>{prefix.pfx}</name><styleUrl>#prefix</styleUrl><Point>")
+            KMLcoordinates(kml, prefix.p, 2)
             kml.WriteLine("</Point></Placemark>")
         Next
         kml.WriteLine("</Folder>")
@@ -387,15 +388,16 @@ Module KMLExport
         SQLdr = sql.ExecuteReader
         While SQLdr.Read
             kml.WriteLine($"<Placemark><name>{KMLescape(SQLdr("name"))}</name><visibility>0</visibility><styleUrl>#antarctic</styleUrl>")
-            Dim point As MapPoint = MapPoint.FromJson(SQLdr("coordinates"))
+            Dim point As MapPoint = Geometry.FromJson(SQLdr("coordinates"))
             kml.WriteLine($"<Point><coordinates>{point.X:f4},{point.Y:f4}</coordinates></Point>")
             kml.WriteLine("<ExtendedData>")
             kml.WriteLine($"<Data name=""name""><value>{KMLescape(SQLdr("name"))}</value></Data>")
-            kml.WriteLine($"<Data name= ""nation""><value>{KMLescape(SQLdr("nation"))}</value></Data>")
+            kml.WriteLine($"<Data name=""nation""><value>{KMLescape(SQLdr("nation"))}</value></Data>")
             kml.WriteLine($"<Data name=""lat""><value>{point.Y:f4}</value></Data>")
             kml.WriteLine($"<Data name=""lon""><value>{point.X:f4}</value></Data>")
             kml.WriteLine($"<Data name=""situation""><value>{KMLescape(SQLdr("situation"))}</value></Data>")
             kml.WriteLine($"<Data name=""altitude""><value>{SQLdr("altitude")}</value></Data>")
+            kml.WriteLine($"<Data name=""open""><value>{KMLescape(SQLdr("open"))}</value></Data>")
             kml.WriteLine("</ExtendedData>")
             kml.WriteLine($"</Placemark>")
         End While

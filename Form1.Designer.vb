@@ -45,9 +45,14 @@ Partial Class Form1
         ImportIARURegionsToolStripMenuItem = New ToolStripMenuItem()
         UseOSMLandPolygonsToolStripMenuItem = New ToolStripMenuItem()
         ImportAntarcticBasesToolStripMenuItem = New ToolStripMenuItem()
+        ImportIOTAToolStripMenuItem = New ToolStripMenuItem()
+        ImportIOTAGroupsToolStripMenuItem = New ToolStripMenuItem()
+        ImportIOTAIslandsToolStripMenuItem = New ToolStripMenuItem()
+        ImportIOTADXCCMatchesOneIOTAToolStripMenuItem = New ToolStripMenuItem()
         TextBox1 = New TextBox()
         ProgressBar1 = New ProgressBar()
         DummyToolStripMenuItem = New ToolStripMenuItem()
+        IOTACheckToolStripMenuItem = New ToolStripMenuItem()
         MenuStrip1.SuspendLayout()
         SuspendLayout()
         ' 
@@ -62,7 +67,7 @@ Partial Class Form1
         ' 
         ' UseShapefileToolStripMenuItem
         ' 
-        UseShapefileToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {UseShapefileToolStripMenuItem1, UseOSMToolStripMenuItem, MakeKMLToolStripMenuItem, MakeKMLByCQZoneToolStripMenuItem, MakeKMLAllEntitiesToolStripMenuItem, MakeShapefileToolStripMenuItem, EntityReportToolStripMenuItem, CheckISO3166ReferencesToolStripMenuItem, ReprocessCountryToolStripMenuItem, CountryCollisionsToolStripMenuItem, RemoveEmptyGeometryToolStripMenuItem, InnerRingsToolStripMenuItem, ExitToolStripMenuItem})
+        UseShapefileToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {UseShapefileToolStripMenuItem1, UseOSMToolStripMenuItem, MakeKMLToolStripMenuItem, MakeKMLByCQZoneToolStripMenuItem, MakeKMLAllEntitiesToolStripMenuItem, MakeShapefileToolStripMenuItem, EntityReportToolStripMenuItem, CheckISO3166ReferencesToolStripMenuItem, ReprocessCountryToolStripMenuItem, CountryCollisionsToolStripMenuItem, RemoveEmptyGeometryToolStripMenuItem, IOTACheckToolStripMenuItem, InnerRingsToolStripMenuItem, ExitToolStripMenuItem})
         UseShapefileToolStripMenuItem.Name = "UseShapefileToolStripMenuItem"
         UseShapefileToolStripMenuItem.Size = New Size(37, 20)
         UseShapefileToolStripMenuItem.Text = "File"
@@ -147,7 +152,7 @@ Partial Class Form1
         ' 
         ' ImportToolStripMenuItem
         ' 
-        ImportToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {ImportISO3166ToolStripMenuItem, ImportEUASBorderToolStripMenuItem, ImportCQITUZonesToolStripMenuItem, ImportTimezonesToolStripMenuItem, ImportIARURegionsToolStripMenuItem, UseOSMLandPolygonsToolStripMenuItem, ImportAntarcticBasesToolStripMenuItem})
+        ImportToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {ImportISO3166ToolStripMenuItem, ImportEUASBorderToolStripMenuItem, ImportCQITUZonesToolStripMenuItem, ImportTimezonesToolStripMenuItem, ImportIARURegionsToolStripMenuItem, UseOSMLandPolygonsToolStripMenuItem, ImportAntarcticBasesToolStripMenuItem, ImportIOTAToolStripMenuItem})
         ImportToolStripMenuItem.Name = "ImportToolStripMenuItem"
         ImportToolStripMenuItem.Size = New Size(55, 20)
         ImportToolStripMenuItem.Text = "Import"
@@ -194,6 +199,31 @@ Partial Class Form1
         ImportAntarcticBasesToolStripMenuItem.Size = New Size(217, 22)
         ImportAntarcticBasesToolStripMenuItem.Text = "Import Antarctic Bases"
         ' 
+        ' ImportIOTAToolStripMenuItem
+        ' 
+        ImportIOTAToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {ImportIOTAGroupsToolStripMenuItem, ImportIOTAIslandsToolStripMenuItem, ImportIOTADXCCMatchesOneIOTAToolStripMenuItem})
+        ImportIOTAToolStripMenuItem.Name = "ImportIOTAToolStripMenuItem"
+        ImportIOTAToolStripMenuItem.Size = New Size(217, 22)
+        ImportIOTAToolStripMenuItem.Text = "Import IOTA"
+        ' 
+        ' ImportIOTAGroupsToolStripMenuItem
+        ' 
+        ImportIOTAGroupsToolStripMenuItem.Name = "ImportIOTAGroupsToolStripMenuItem"
+        ImportIOTAGroupsToolStripMenuItem.Size = New Size(269, 22)
+        ImportIOTAGroupsToolStripMenuItem.Text = "Import IOTA Groups"
+        ' 
+        ' ImportIOTAIslandsToolStripMenuItem
+        ' 
+        ImportIOTAIslandsToolStripMenuItem.Name = "ImportIOTAIslandsToolStripMenuItem"
+        ImportIOTAIslandsToolStripMenuItem.Size = New Size(269, 22)
+        ImportIOTAIslandsToolStripMenuItem.Text = "Import IOTA Islands"
+        ' 
+        ' ImportIOTADXCCMatchesOneIOTAToolStripMenuItem
+        ' 
+        ImportIOTADXCCMatchesOneIOTAToolStripMenuItem.Name = "ImportIOTADXCCMatchesOneIOTAToolStripMenuItem"
+        ImportIOTADXCCMatchesOneIOTAToolStripMenuItem.Size = New Size(269, 22)
+        ImportIOTADXCCMatchesOneIOTAToolStripMenuItem.Text = "Import IOTA DXCC matches one IOTA"
+        ' 
         ' TextBox1
         ' 
         TextBox1.Location = New Point(12, 27)
@@ -215,9 +245,15 @@ Partial Class Form1
         DummyToolStripMenuItem.Name = "DummyToolStripMenuItem"
         DummyToolStripMenuItem.Size = New Size(32, 19)
         ' 
+        ' IOTACheckToolStripMenuItem
+        ' 
+        IOTACheckToolStripMenuItem.Name = "IOTACheckToolStripMenuItem"
+        IOTACheckToolStripMenuItem.Size = New Size(209, 22)
+        IOTACheckToolStripMenuItem.Text = "IOTA check"
+        ' 
         ' Form1
         ' 
-        AutoScaleDimensions = New SizeF(7F, 15F)
+        AutoScaleDimensions = New SizeF(7.0F, 15.0F)
         AutoScaleMode = AutoScaleMode.Font
         ClientSize = New Size(1286, 502)
         Controls.Add(ProgressBar1)
@@ -258,5 +294,10 @@ Partial Class Form1
     Friend WithEvents MakeKMLAllEntitiesToolStripMenuItem As ToolStripMenuItem
     Friend WithEvents InnerRingsToolStripMenuItem As ToolStripMenuItem
     Friend WithEvents ImportAntarcticBasesToolStripMenuItem As ToolStripMenuItem
+    Friend WithEvents ImportIOTAToolStripMenuItem As ToolStripMenuItem
+    Friend WithEvents ImportIOTAGroupsToolStripMenuItem As ToolStripMenuItem
+    Friend WithEvents ImportIOTAIslandsToolStripMenuItem As ToolStripMenuItem
+    Friend WithEvents ImportIOTADXCCMatchesOneIOTAToolStripMenuItem As ToolStripMenuItem
+    Friend WithEvents IOTACheckToolStripMenuItem As ToolStripMenuItem
 
 End Class

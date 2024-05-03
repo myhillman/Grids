@@ -3,20 +3,12 @@ Imports System.Diagnostics.Contracts
 Imports System.IO
 Imports System.IO.Compression
 Imports System.Net.Http
-Imports System.Security.Policy
 Imports System.Text.Json.Nodes
 Imports System.Text.RegularExpressions
-Imports System.Web
-Imports System.Windows.Forms.AxHost
-Imports System.Xml
-Imports System.Xml.XPath
 Imports Esri.ArcGISRuntime
 Imports Esri.ArcGISRuntime.Data
 Imports Esri.ArcGISRuntime.Geometry
-Imports HtmlAgilityPack
 Imports Microsoft.Data.Sqlite
-Imports Microsoft.VisualBasic.FileIO
-
 
 Enum Winding
     Outer = 1
@@ -1124,36 +1116,7 @@ There are some additional folders which are closed by default. You must open the
         Next
         Return String.Join(";<br>", hyperlinkList)
     End Function
-    Private Sub ImportISO3166ToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles ImportISO3166ToolStripMenuItem.Click
-        ' Import ISO3166-1 country codes
-        Dim sql As SqliteCommand, updated As Integer = 0
-        Using connect As New SqliteConnection(DXCC_DATA),
-              ISO3166 As New TextFieldParser($"{Application.StartupPath}\ISO3166.csv")
-            connect.Open()
-            sql = connect.CreateCommand
-            With ISO3166
-                .TextFieldType = FileIO.FieldType.Delimited
-                .SetDelimiters(",")
-            End With
-            Dim lines As Integer = 1
-            Try
-                sql.CommandText = $"DELETE FROM `ISO31661`"    ' remove existing data
-                sql.ExecuteNonQuery()
 
-                While Not ISO3166.EndOfData
-                    If lines > 1 Then
-                        Dim currentRow = ISO3166.ReadFields
-                        sql.CommandText = $"INSERT INTO `ISO31661`(`Entity`,`Code`) VALUES('{SQLescape(currentRow(0))}','{currentRow(1)}')"
-                        updated += sql.ExecuteNonQuery
-                    End If
-                    lines += 1
-                End While
-            Catch ex As MalformedLineException
-                MsgBox("Line " & ex.Message & "is not valid and will be skipped.")
-            End Try
-            AppendText(TextBox1, $"{updated} ISO6133 codes imported{vbCrLf}")
-        End Using
-    End Sub
     Shared Function PolygonArea(polygon As ReadOnlyPart) As Double
         ' Calculate the area of a polygon using the 'Shoelace' or Gauss's formula
         ' https://en.wikipedia.org/wiki/Shoelace_formula
@@ -1176,109 +1139,11 @@ There are some additional folders which are closed by default. You must open the
     End Sub
 
     Private Sub CheckISO3166ReferencesToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles CheckISO3166ReferencesToolStripMenuItem.Click
-        ' Create a table of ISO 3166-1 references. Any value != 1 requires a look
-        Dim sqlISO As SqliteCommand, ISOdr As SqliteDataReader, sqlDXCC As SqliteCommand, DXCCdr As SqliteDataReader, updated As Integer = 0, count As Integer = 0
-        Using connect As New SqliteConnection(DXCC_DATA),
-              ISO As New StreamWriter($"{Application.StartupPath}\ISOreport.html", False)
-
-            connect.Open()
-            sqlISO = connect.CreateCommand
-            sqlDXCC = connect.CreateCommand
-            sqlISO.CommandText = "SELECT count(*) AS Total FROM ISO31661"
-            ISOdr = sqlISO.ExecuteReader
-            ISOdr.Read()
-            With ProgressBar1
-                .Minimum = 0
-                .Value = 0
-                .Maximum = CInt(ISOdr("Total"))
-            End With
-            ISOdr.Close()
-            ISO.WriteLine("<table border=1")
-            ISO.WriteLine("<tr><th>Entity</th><th>Code</th><th>References</th></tr>")
-            sqlISO.CommandText = "SELECT * FROM ISO31661 ORDER by Entity"
-            ISOdr = sqlISO.ExecuteReader
-            While ISOdr.Read
-                count += 1
-                ProgressBar1.Value = count
-                sqlDXCC.CommandText = $"SELECT COUNT(*) as Total FROM DXCC WHERE query LIKE '%={ISOdr("Code")}]%'"
-                Dim refs = 0
-                DXCCdr = sqlDXCC.ExecuteReader
-                DXCCdr.Read()
-                refs += DXCCdr("Total")
-                DXCCdr.Close()
-                ISO.WriteLine($"<tr><td>{ISOdr("Entity")}</td><td>{ISOdr("Code")}</td><td>{refs}</td></tr>")
-            End While
-            ISO.WriteLine("</table>")
-        End Using
-        AppendText(TextBox1, $"Done{vbCrLf}")
+        Checkiso3166references
     End Sub
 
     Private Sub CountryCollisionsToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles CountryCollisionsToolStripMenuItem.Click
-        ' Search for DXCC that intersect
-        Dim sql As SqliteCommand, SQLdr As SqliteDataReader, theWorld As New List(Of (Entity As String, geom As Geometry)), overlaps As Integer = 0
-        ' List of country collisions that are acceptable, i.e. there isn't much we can do about it, and they don;t compromise the utility of the data
-        Dim AcceptableCollisions As New List(Of (A As String, B As String)) From {
-            {("Finland", "Aland Is")},
-            {("Alaska", "Canada")},
-            {("Canada", "Sable Is")},
-            {("Canada", "St Paul Is")},
-            {("Canada", "United States")},
-            {("Cuba", "Guantanamo Bay")},
-            {("Italy", "Vatican")},
-            {("United Nations HQ", "United States")},
-            {("Argentina", "Chile")},
-            {("Morocco", "Western Sahara")},
-            {("Desecheo Is", "Puerto Rico")},
-            {("Sudan", "South Sudan")}
-            }
-        AppendText(TextBox1, $"The following collisions are deemed acceptable/unavoidable{vbCrLf}")
-        For Each accept In AcceptableCollisions
-            AppendText(TextBox1, $"{accept.A} - {accept.B}{vbCrLf}")
-        Next
-        Using connect As New SqliteConnection(DXCC_DATA)
-            connect.Open()
-            sql = connect.CreateCommand
-            ' Find how many DXCC have geometry
-            sql.CommandText = "SELECT COUNT(*) as Total FROM DXCC WHERE geometry IS NOT NULL"
-            SQLdr = sql.ExecuteReader
-            SQLdr.Read()
-            With ProgressBar1
-                .Minimum = 0
-                .Value = 0
-                .Maximum = SQLdr("Total")
-            End With
-            SQLdr.Close()
-            ' Retrieve all the geometry
-            AppendText(TextBox1, $"Loading geometry for {ProgressBar1.Maximum} countries{vbCrLf}")
-            theWorld.Clear()
-            sql.CommandText = "SELECT * FROM DXCC WHERE geometry IS NOT NULL ORDER BY Entity"
-            SQLdr = sql.ExecuteReader
-            While SQLdr.Read
-                ProgressBar1.Value += 1
-                Dim poly As Polygon = Polygon.FromJson(SQLdr("geometry"))
-                Dim polyBuffered = GeometryEngine.BufferGeodetic(poly, -10000, LinearUnits.Meters)       ' shrink the polygons a little
-                ' if the buffered polygon disappears, replace it with the original
-                If Not polyBuffered.IsEmpty Then
-                    poly = polyBuffered
-                End If
-                theWorld.Add((Entity:=SQLdr("Entity"), geom:=poly))
-            End While
-            AppendText(TextBox1, $"Geometry for {theWorld.Count} entities loaded{vbCrLf}")
-            ' test for collisions
-            For outer = 0 To theWorld.Count - 1
-                ProgressBar1.Value = outer
-                For inner = outer + 1 To theWorld.Count - 1
-                    Dim Acceptable As Boolean = AcceptableCollisions.Contains((theWorld.Item(outer).Entity, theWorld.Item(inner).Entity)) Or AcceptableCollisions.Contains((theWorld.Item(inner).Entity, theWorld.Item(outer).Entity))
-                    If Not Acceptable Then
-                        If GeometryEngine.Intersects(theWorld.Item(outer).geom, theWorld.Item(inner).geom) Then
-                            AppendText(TextBox1, $"The entities {theWorld.Item(outer).Entity} and {theWorld.Item(inner).Entity} overlap{vbCrLf}")
-                            overlaps += 1
-                        End If
-                    End If
-                Next
-            Next
-            AppendText(TextBox1, $"{overlaps} overlaps found{vbCrLf}")
-        End Using
+        CountryCollisions
     End Sub
 
     Private Sub RemoveEmptyGeometryToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles RemoveEmptyGeometryToolStripMenuItem.Click
@@ -1310,53 +1175,6 @@ There are some additional folders which are closed by default. You must open the
                 End If
             End While
         End Using
-    End Sub
-
-    Private Sub ImportEUASBorderToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles ImportEUASBorderToolStripMenuItem.Click
-        ' Import the border kml file for EU/AS. It has 464 linestrings and 13 digit precision
-        ' We can compress it to one linestring and 4 dec places. Reduces size to 10%
-        Dim plb As New PolylineBuilder(SpatialReferences.Wgs84)
-
-        Dim doc = XDocument.Load($"{Application.StartupPath}\border.kml")    ' read the XML
-        Dim ns = doc.Root.Name.Namespace      ' get namespace name so we can qualify everything
-        Dim nsmgr As New XmlNamespaceManager(New NameTable)
-        nsmgr.AddNamespace("x", ns.NamespaceName)
-        Dim linestrings = doc.XPathSelectElements("//x:LineString/x:coordinates", nsmgr)       ' find all the linestrings
-        AppendText(TextBox1, $"{linestrings.Count} linestrings loaded{vbCrLf}")
-        For Each coordinates In linestrings
-            Dim coords As List(Of String), linestr As New Part(SpatialReferences.Wgs84)
-            Dim value = coordinates.Value
-            value = Regex.Replace(value, "[^0-9\-\., ]", "")     ' remove noise characters
-            value = Trim(value)
-            coords = Split(value, " ").ToList   ' bust into coordinate pairs
-            linestr.Clear()
-
-            For Each coord In coords
-                Dim points = Split(coord, ",")
-                linestr.AddPoint(points(0), points(1))
-            Next
-            plb.AddPart(linestr)
-        Next
-        ' make polygon out of parts
-        Dim poly As New Polygon(plb.Parts)
-        Dim polyGeneralized = Generalize(poly)   ' reduce it in size
-        ' Now produce KML for border
-        Using kml As New StreamWriter($"{Application.StartupPath}\KML\BorderEUAS.kml", False)
-            kml.WriteLine(KMLheader)
-            kml.WriteLine("<Placemark><styleUrl>#red</styleUrl>")
-            kml.WriteLine("<name>Boundary between European and Asiatic Russia</name>")
-            kml.WriteLine("<description>Generally accepted border between Europe and Asia.</description>")
-            kml.WriteLine("<MultiGeometry>")
-            For Each p In polyGeneralized.Parts
-                kml.WriteLine("<LineString>")
-                KMLcoordinates(kml, p.Points.ToList, 4)
-                kml.WriteLine("</LineString>")
-            Next
-            kml.WriteLine("</MultiGeometry>")
-            kml.WriteLine("</Placemark>")
-            kml.WriteLine(KMLfooter)
-        End Using
-        AppendText(TextBox1, $"Done{vbCrLf}")
     End Sub
 
     Private Async Sub UseOSMLandPolygonsToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles UseOSMLandPolygonsToolStripMenuItem.Click
@@ -1435,186 +1253,6 @@ There are some additional folders which are closed by default. You must open the
         Return polyGeneralized
     End Function
 
-    Private Sub ImportCQITUZonesToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles ImportCQITUZonesToolStripMenuItem.Click
-        ' Import CQ & ITU zone data
-        Dim sql As SqliteCommand
-
-        Using connect As New SqliteConnection(DXCC_DATA)
-            connect.Open()
-            sql = connect.CreateCommand
-            ' Delete existing data
-            sql.CommandText = $"DELETE FROM ZoneLines"
-            sql.ExecuteNonQuery()
-            sql.CommandText = $"DELETE FROM ZoneLabels"
-            sql.ExecuteNonQuery()
-            ' Load CQ zone data
-            Dim doc = XDocument.Load($"{Application.StartupPath}\CQ.kml")    ' read the XML
-            Dim ns = doc.Root.Name.Namespace      ' get namespace name so we can qualify everything
-            Dim nsmgr As New XmlNamespaceManager(New NameTable)
-            nsmgr.AddNamespace("x", ns.NamespaceName)
-            ' First extract 39 linestrings
-            Dim folders = doc.XPathSelectElement("//x:Folder", nsmgr)   ' the top level folder
-            Dim folder = folders.XPathSelectElement("x:Folder[1]", nsmgr)       ' find all the linestrings
-            'Dim CQboundaries = boundaries.XPathSelectElements("x:Placemark", nsmgr)
-            Dim CQboundaries = From p In folder.Descendants Where p.Name.LocalName = "Placemark" Select p
-            AppendText(TextBox1, $"Retrieved {CQboundaries.Count} CQ zone boundaries{vbCrLf}")
-            For Each boundary In CQboundaries
-                Dim name = boundary.XPathSelectElement("x:name", nsmgr).Value
-                Dim NameSplit = name.Split("-")
-                Dim line = CInt(NameSplit(1))
-                Dim coordinates = boundary.XPathSelectElement("x:LineString/x:coordinates", nsmgr).Value
-                coordinates = Regex.Replace(coordinates, "[^0-9\-\., ]", "")     ' remove noise characters
-                coordinates = Trim(coordinates)
-                Dim coords = Split(coordinates, " ").ToList   ' bust into coordinate pairs
-                Dim linestr As New List(Of MapPoint)
-                For Each coord In coords
-                    Dim points = Split(coord, ",")
-                    linestr.Add(New MapPoint(points(0), points(1), SpatialReferences.Wgs84))
-                Next
-                Dim linestring As New Multipoint(linestr)   ' create multipoint linestring
-                ' Insert into database
-                sql.CommandText = $"INSERT INTO ZoneLines (Type,line,geometry) VALUES ('CQ',{line},'{linestring.ToJson}')"
-                sql.ExecuteNonQuery()
-            Next
-
-            ' Now extract 40 zone labels
-            Dim labels = folders.XPathSelectElement("x:Folder[2]", nsmgr)       ' find all the labels
-            Dim CQlabels = From p In labels.Descendants Where p.Name.LocalName = "Placemark" Select p
-            AppendText(TextBox1, $"Retrieved {CQlabels.Count} CQ zone labels{vbCrLf}")
-            For Each label In CQlabels
-                Dim name = label.XPathSelectElement("x:name", nsmgr).Value
-                Dim NameSplit = name.Split(" ")
-                Dim Zone = CInt(NameSplit(1))
-                Dim coordinates = label.XPathSelectElement("x:Point/x:coordinates", nsmgr).Value
-                coordinates = Regex.Replace(coordinates, "[^0-9\-\., ]", "")     ' remove noise characters
-                coordinates = Trim(coordinates)
-                Dim coords = Split(coordinates, ",").ToList   ' bust into coordinates
-                Dim pnt As New MapPoint(coords(0), coords(1), SpatialReferences.Wgs84)
-                ' Insert into database
-                sql.CommandText = $"INSERT INTO ZoneLabels (Type,zone,geometry) VALUES ('CQ',{Zone},'{pnt.ToJson}')"
-                sql.ExecuteNonQuery()
-            Next
-
-            ' Load ITU zone data
-            doc = XDocument.Load($"{Application.StartupPath}\ITU.kml")    ' read the XML
-            ns = doc.Root.Name.Namespace      ' get namespace name so we can qualify everything
-            nsmgr = New XmlNamespaceManager(New NameTable)
-            nsmgr.AddNamespace("x", ns.NamespaceName)
-            ' First extract linestrings
-            folders = doc.XPathSelectElement("//x:Folder", nsmgr)   ' the top level folder
-            folder = folders.XPathSelectElement("x:Folder[1]", nsmgr)       ' find all the linestrings
-
-            Dim ITUboundaries = From p In folder.Descendants Where p.Name.LocalName = "Placemark" Select p
-            AppendText(TextBox1, $"Retrieved {ITUboundaries.Count} ITU zone boundaries{vbCrLf}")
-            For Each boundary In ITUboundaries
-                Dim name = boundary.XPathSelectElement("x:name", nsmgr).Value
-                Dim NameSplit = name.Split("-")
-                Dim line = CInt(NameSplit(1))
-                Dim coordinates = boundary.XPathSelectElement("x:LineString/x:coordinates", nsmgr).Value
-                coordinates = Regex.Replace(coordinates, "[^0-9\-\., ]", "")     ' remove noise characters
-                coordinates = Trim(coordinates)
-                Dim coords = Split(coordinates, " ").ToList   ' bust into coordinate pairs
-                Dim linestr As New List(Of MapPoint)
-                For Each coord In coords
-                    Dim points = Split(coord, ",")
-                    linestr.Add(New MapPoint(points(0), points(1), SpatialReferences.Wgs84))
-                Next
-                Dim linestring As New Multipoint(linestr)   ' create multipoint linestring
-                ' Insert into database
-                sql.CommandText = $"INSERT INTO ZoneLines (Type,line,geometry) VALUES ('ITU',{line},'{linestring.ToJson}')"
-                sql.ExecuteNonQuery()
-            Next
-
-            ' Now extract 40 zone labels
-            labels = folders.XPathSelectElement("x:Folder[2]", nsmgr)       ' find all the labels
-            Dim ITUlabels = From p In labels.Descendants Where p.Name.LocalName = "Placemark" Select p
-            AppendText(TextBox1, $"Retrieved {ITUlabels.Count} ITU zone labels{vbCrLf}")
-            For Each label In ITUlabels
-                Dim name = label.XPathSelectElement("x:name", nsmgr).Value
-                Dim NameSplit = name.Split(" ")
-                Dim Zone = CInt(NameSplit(1))
-                Dim coordinates = label.XPathSelectElement("x:Point/x:coordinates", nsmgr).Value
-                coordinates = Regex.Replace(coordinates, "[^0-9\-\., ]", "")     ' remove noise characters
-                coordinates = Trim(coordinates)
-                Dim coords = Split(coordinates, ",").ToList   ' bust into coordinates
-                Dim pnt As New MapPoint(coords(0), coords(1), SpatialReferences.Wgs84)
-                ' Insert into database
-                sql.CommandText = $"INSERT INTO ZoneLabels (Type,zone,geometry) VALUES ('ITU',{Zone},'{pnt.ToJson}')"
-                sql.ExecuteNonQuery()
-            Next
-        End Using
-        AppendText(TextBox1, $"Done{vbCrLf}")
-    End Sub
-
-    Private Async Sub ImportTimezonesToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles ImportTimezonesToolStripMenuItem.Click
-        ' Import a timezone database
-        Dim myQueryFilter As New QueryParameters, sql As SqliteCommand
-
-        Dim Features = Await ShapefileFeatureTable.OpenAsync("D:\GIS Data\Timezones\ne_10m_time_zones.shp")
-        With myQueryFilter
-            .OutSpatialReference = SpatialReferences.Wgs84     ' results in WGS84
-            .ReturnGeometry = True
-        End With
-        Dim Timezones = Await Features.QueryFeaturesAsync(myQueryFilter).ConfigureAwait(False)           ' run query
-        Using connect As New SqliteConnection(DXCC_DATA)
-            connect.Open()
-            sql = connect.CreateCommand
-            sql.CommandText = "DELETE FROM Timezones"       ' remove existing data
-            sql.ExecuteNonQuery()
-            For Each timezone In Timezones
-                Dim poly = timezone.Geometry        ' get the geometry
-                poly = poly.Simplify
-                Dim polyGeneralized = poly.Generalize(0.1, True)   ' make it smaller
-                If polyGeneralized.IsEmpty Then polyGeneralized = poly    ' if if disappeared when Generalized, restore it
-                sql.CommandText = $"INSERT INTO Timezones (name,places,color,geometry) VALUES ('{SQLescape(timezone.Attributes("name"))}','{SQLescape(timezone.Attributes("places"))}',{timezone.Attributes("map_color6")},'{polyGeneralized.ToJson}')"
-                sql.ExecuteNonQuery()
-            Next
-        End Using
-        AppendText(TextBox1, $"{Timezones.Count} timezones imported{vbCrLf}")
-    End Sub
-
-    Private Async Sub ImportIARURegionsToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles ImportIARURegionsToolStripMenuItem.Click
-        ' Import a timezone database
-        Dim myQueryFilter As New QueryParameters, sql As SqliteCommand, count As Integer = 0
-
-        Dim Features = Await ShapefileFeatureTable.OpenAsync("D:\GIS Data\IARU\IARU Region Lines_50m_No_Edges_Simplified.shp")
-        With myQueryFilter
-            .OutSpatialReference = SpatialReferences.Wgs84     ' results in WGS84
-            .ReturnGeometry = True
-        End With
-        Dim Regions = Await Features.QueryFeaturesAsync(myQueryFilter).ConfigureAwait(False)           ' run query
-        AppendText(TextBox1, $"{Regions.Count} IARU boundary lines loaded{vbCrLf}")
-        Using connect As New SqliteConnection(DXCC_DATA)
-            connect.Open()
-            sql = connect.CreateCommand
-            sql.CommandText = "DELETE FROM IARU"       ' remove existing data
-            sql.ExecuteNonQuery()
-            Dim GeneralizeAngle As Double = RadtoDeg(Math.Asin(20 * 1000 / EARTH_RADIUS))   ' angle for Generalize
-            For Each Reg In Regions
-                count += 1
-                Dim geom As Polyline = Reg.Geometry
-                Dim OriginalCount As Integer = 0
-                Dim DensifyCount As Integer = 0
-                Dim GeneralizeCount As Integer = 0
-                For Each line In geom.Parts
-                    OriginalCount += line.PointCount
-                Next
-                geom = geom.Densify(2)    ' make sure there is a point every 2 degrees
-                For Each line In geom.Parts
-                    DensifyCount += line.PointCount
-                Next
-                geom = GeometryEngine.Generalize(geom, GeneralizeAngle, True)   ' Generalize a polygon to reduce it in size
-                For Each line In geom.Parts
-                    GeneralizeCount += line.PointCount
-                Next
-                If geom.IsEmpty Then geom = Reg.Geometry
-                If geom.LengthGeodetic > 0 Then sql.CommandText = $"INSERT INTO IARU (line,geometry) VALUES ({count},'{geom.ToJson}')"
-                sql.ExecuteNonQuery()
-                AppendText(TextBox1, $"{count} Parts {geom.Parts.Count}, Original {OriginalCount}, Densify {DensifyCount}, Generalize {GeneralizeCount}{vbCrLf}")
-            Next
-        End Using
-    End Sub
-
     Private Sub MakeKMLAllEntitiesToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles MakeKMLAllEntitiesToolStripMenuItem.Click
         ' Make individual KML files for all entities
         Dim sql As SqliteCommand, SQLdr As SqliteDataReader
@@ -1637,18 +1275,6 @@ There are some additional folders which are closed by default. You must open the
             End While
         End Using
     End Sub
-
-    Private Async Sub ImportAntarcticaToolStripMenuItem_Click(sender As Object, e As EventArgs)
-        ' Get the country boundary for Antarctica. No useful one in OSM
-        Dim qp As New QueryParameters
-        Dim Features = Await ShapefileFeatureTable.OpenAsync("D:\GIS Data\World countries generalized\World_Countries_Generalized.shp")
-        With qp
-            .WhereClause = "COUNTRY='Antarctica'"            ' get all features
-            .ReturnGeometry = True
-        End With
-        Dim fqr = Await Features.QueryFeaturesAsync(qp)
-    End Sub
-
     Private Sub InnerRingsToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles InnerRingsToolStripMenuItem.Click
         ' Find countries with inner rings. Some are genuine
         Dim KnownInner As New List(Of String) From {"Argentina", "Australia", "Belarus", "Belgium", "China", "Fed Rep of Germany", "France", "French Polynesia", "Indonesia", "Italy", "Kyrgyzstan", "Mozambique", "Netherlands", "Oman", "Paraguay", "Republic of South Africa", "Serbia", "Spain", "Switzerland", "United Arab Emirates", "Uruguay", "Uzbekistan"}     ' list of entities known to contain genuine inner(s) (enclaves)
@@ -1693,63 +1319,43 @@ There are some additional folders which are closed by default. You must open the
         End Using
     End Sub
 
-    Private Async Sub ImportAntarcticBasesToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles ImportAntarcticBasesToolStripMenuItem.Click
-        Dim responseString As String
-        Using httpClient As New System.Net.Http.HttpClient()
-            httpClient.Timeout = New TimeSpan(0, 10, 0)        ' 10 min timeout
-            Dim url = "https://www.coolantarctica.com/Community/antarctic_bases.php"
-            Try
-                Dim httpResult As System.Net.Http.HttpResponseMessage = Await httpClient.GetAsync(url)
-                httpResult.EnsureSuccessStatusCode()
-                responseString = Await httpResult.Content.ReadAsStringAsync()
-            Catch ex As HttpRequestException
-                MsgBox($"{ex.Message}{vbCrLf}url={url}", vbCritical + vbOKOnly, "Retrieve error")
-            End Try
-        End Using
 
-        Dim sql As SqliteCommand
-        Using connect As New SqliteConnection(DXCC_DATA)
-            connect.Open()
-            sql = connect.CreateCommand
-            ' Delete existing data
-            sql.CommandText = "DELETE FROM Antarctic"
-            sql.ExecuteNonQuery()
-            ' Dim allowedChars As String = "[^0-9a-zA-Z\-\:\./°\'\""]"
-            Dim replacements As New Dictionary(Of String, String) From {
-            {"&deg;", "°"},
-            {"&#39;", "'"},
-            {"&quot;", """"}
-            }
-            Dim allowedChars As String = "(\t|\n|&nbsp;)"
-            Dim htmldoc As New HtmlDocument()
-            htmldoc.LoadHtml(responseString)
-            Dim table = htmldoc.DocumentNode.SelectSingleNode("//table")
-            Dim rows = table.SelectNodes("tr")
-            With ProgressBar1
-                .Minimum = 0
-                .Value = 0
-                .Maximum = rows.Count - 1
-            End With
-            For row = 0 To rows.Count - 2
-                ProgressBar1.Value += 1
-                Dim Name = HttpUtility.HtmlDecode(rows(row).SelectNodes("td").Item(0).InnerText)
-                Name = Regex.Replace(Name, allowedChars, "")
-                Dim nation = HttpUtility.HtmlDecode(rows(row).SelectNodes("td").Item(1).InnerText)
-                nation = Regex.Replace(nation, allowedChars, "")
-                Dim coordinates = HttpUtility.HtmlDecode(rows(row).SelectNodes("td").Item(2).InnerText)
-                coordinates = Regex.Replace(coordinates, allowedChars, "")
-                For Each rep In replacements
-                    coordinates = coordinates.Replace(rep.Key, rep.Value)
-                Next
-                Dim coord As MapPoint = CoordinateFormatter.FromLatitudeLongitude(coordinates, SpatialReferences.Wgs84)  ' DD MM SS to decimal
-                Dim situation = HttpUtility.HtmlDecode(rows(row).SelectNodes("td").Item(3).InnerText)
-                situation = Regex.Replace(situation, allowedChars, "")
-                Dim altitude = HttpUtility.HtmlDecode(rows(row).SelectNodes("td").Item(4).InnerText)
-                altitude = Regex.Replace(altitude, allowedChars, "")
-                sql.CommandText = $"INSERT INTO Antarctic (name,nation,coordinates,situation,altitude) VALUES ('{SQLescape(Name)}','{SQLescape(nation)}','{coord.ToJson}','{situation}','{altitude}')"
-                sql.ExecuteNonQuery()
-            Next
-        End Using
+    Private Sub ImportCQITUZonesToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles ImportCQITUZonesToolStripMenuItem.Click
+        ImportCQITUZones()
+    End Sub
+
+    Private Async Sub ImportTimezonesToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles ImportTimezonesToolStripMenuItem.Click
+        Await ImportTimeZones()
+    End Sub
+
+    Private Sub ImportEUASBorderToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles ImportEUASBorderToolStripMenuItem.Click
+        ImportEUASBorder()
+    End Sub
+    Private Async Sub ImportIARURegionsToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles ImportIARURegionsToolStripMenuItem.Click
+        Await ImportIARURegions()
+    End Sub
+    Private Async Sub ImportAntarcticBasesToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles ImportAntarcticBasesToolStripMenuItem.Click
+        Await ImportAntarcticBases()
+    End Sub
+    Private Async Sub ImportIOTAGroupsToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles ImportIOTAGroupsToolStripMenuItem.Click
+        Await ImportIOTAGroups()
+    End Sub
+    Private Async Sub ImportAntarcticaToolStripMenuItem_Click(sender As Object, e As EventArgs)
+        Await ImportAntarctica()
+    End Sub
+    Private Async Sub ImportIOTAIslandsToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles ImportIOTAIslandsToolStripMenuItem.Click
+        Await ImportIOTAIslands()
+    End Sub
+
+    Private Async Sub ImportIOTADXCCMatchesOneIOTAToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles ImportIOTADXCCMatchesOneIOTAToolStripMenuItem.Click
+        Await ImportIOTADXCCMatchesOneIOTA()
+    End Sub
+    Private Sub ImportISO3166ToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles ImportISO3166ToolStripMenuItem.Click
+        ImportISO3166()
+    End Sub
+
+    Private Sub IOTACheckToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles IOTACheckToolStripMenuItem.Click
+        IOTACheck
     End Sub
 End Class
 
