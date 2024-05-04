@@ -35,6 +35,7 @@ Partial Class Form1
         ReprocessCountryToolStripMenuItem = New ToolStripMenuItem()
         CountryCollisionsToolStripMenuItem = New ToolStripMenuItem()
         RemoveEmptyGeometryToolStripMenuItem = New ToolStripMenuItem()
+        IOTACheckToolStripMenuItem = New ToolStripMenuItem()
         InnerRingsToolStripMenuItem = New ToolStripMenuItem()
         ExitToolStripMenuItem = New ToolStripMenuItem()
         ImportToolStripMenuItem = New ToolStripMenuItem()
@@ -52,13 +53,14 @@ Partial Class Form1
         TextBox1 = New TextBox()
         ProgressBar1 = New ProgressBar()
         DummyToolStripMenuItem = New ToolStripMenuItem()
-        IOTACheckToolStripMenuItem = New ToolStripMenuItem()
+        TestToolStripMenuItem = New ToolStripMenuItem()
+        ParseBoxToolStripMenuItem = New ToolStripMenuItem()
         MenuStrip1.SuspendLayout()
         SuspendLayout()
         ' 
         ' MenuStrip1
         ' 
-        MenuStrip1.Items.AddRange(New ToolStripItem() {UseShapefileToolStripMenuItem, ImportToolStripMenuItem})
+        MenuStrip1.Items.AddRange(New ToolStripItem() {UseShapefileToolStripMenuItem, ImportToolStripMenuItem, TestToolStripMenuItem})
         MenuStrip1.Location = New Point(0, 0)
         MenuStrip1.Name = "MenuStrip1"
         MenuStrip1.Size = New Size(1286, 24)
@@ -137,6 +139,12 @@ Partial Class Form1
         RemoveEmptyGeometryToolStripMenuItem.Name = "RemoveEmptyGeometryToolStripMenuItem"
         RemoveEmptyGeometryToolStripMenuItem.Size = New Size(209, 22)
         RemoveEmptyGeometryToolStripMenuItem.Text = "Remove empty geometry"
+        ' 
+        ' IOTACheckToolStripMenuItem
+        ' 
+        IOTACheckToolStripMenuItem.Name = "IOTACheckToolStripMenuItem"
+        IOTACheckToolStripMenuItem.Size = New Size(209, 22)
+        IOTACheckToolStripMenuItem.Text = "IOTA check"
         ' 
         ' InnerRingsToolStripMenuItem
         ' 
@@ -245,15 +253,22 @@ Partial Class Form1
         DummyToolStripMenuItem.Name = "DummyToolStripMenuItem"
         DummyToolStripMenuItem.Size = New Size(32, 19)
         ' 
-        ' IOTACheckToolStripMenuItem
+        ' TestToolStripMenuItem
         ' 
-        IOTACheckToolStripMenuItem.Name = "IOTACheckToolStripMenuItem"
-        IOTACheckToolStripMenuItem.Size = New Size(209, 22)
-        IOTACheckToolStripMenuItem.Text = "IOTA check"
+        TestToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {ParseBoxToolStripMenuItem})
+        TestToolStripMenuItem.Name = "TestToolStripMenuItem"
+        TestToolStripMenuItem.Size = New Size(39, 20)
+        TestToolStripMenuItem.Text = "Test"
+        ' 
+        ' ParseBoxToolStripMenuItem
+        ' 
+        ParseBoxToolStripMenuItem.Name = "ParseBoxToolStripMenuItem"
+        ParseBoxToolStripMenuItem.Size = New Size(180, 22)
+        ParseBoxToolStripMenuItem.Text = "ParseBox"
         ' 
         ' Form1
         ' 
-        AutoScaleDimensions = New SizeF(7.0F, 15.0F)
+        AutoScaleDimensions = New SizeF(7F, 15F)
         AutoScaleMode = AutoScaleMode.Font
         ClientSize = New Size(1286, 502)
         Controls.Add(ProgressBar1)
@@ -299,5 +314,7 @@ Partial Class Form1
     Friend WithEvents ImportIOTAIslandsToolStripMenuItem As ToolStripMenuItem
     Friend WithEvents ImportIOTADXCCMatchesOneIOTAToolStripMenuItem As ToolStripMenuItem
     Friend WithEvents IOTACheckToolStripMenuItem As ToolStripMenuItem
+    Friend WithEvents TestToolStripMenuItem As ToolStripMenuItem
+    Friend WithEvents ParseBoxToolStripMenuItem As ToolStripMenuItem
 
 End Class

@@ -1,8 +1,6 @@
-﻿Imports Microsoft.Data.Sqlite
-Imports System.Diagnostics.Eventing.Reader
-Imports System.IO
+﻿Imports System.IO
 Imports System.Text.RegularExpressions
-Imports System.Xml
+Imports Microsoft.Data.Sqlite
 
 Public Class KMLbyCQ
     Private Sub KMLbyCQ_Load(sender As Object, e As EventArgs) Handles Me.Load

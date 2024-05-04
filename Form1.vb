@@ -90,7 +90,6 @@ There are some additional folders which are closed by default. You must open the
         If range Then result &= $"-{previous_number:00}"
         Return result
     End Function
-
     Shared Function GridSquare(p As MapPoint) As String
         ' Convert a mappoint to a gridsquare
         ' https://ham.stackexchange.com/questions/221/how-can-one-convert-from-lat-long-to-grid-square
@@ -345,7 +344,7 @@ There are some additional folders which are closed by default. You must open the
     Public Async Function CreateGrids(connect As SqliteConnection, country As String) As Task(Of Integer)
 
         Dim sql As SqliteCommand, SQLdr As SqliteDataReader, sqlupd As SqliteCommand
-        Dim responseString As String, geometry As String, dxcc As Integer, query As String
+        Dim responseString As String = "", geometry As String, dxcc As Integer, query As String
 
         AppendText(TextBox1, $"Creating grids for {country}{vbCrLf}")
 
@@ -395,6 +394,7 @@ There are some additional folders which are closed by default. You must open the
                     ' Need to check left and right, but there could be a situation (e.g. Fiji) where the bounding box crosses the Antimeridian
                     Debug.Assert(CDbl(box(1)) < CDbl(box(3)) Or (CDbl(box(1)) > 0 And CDbl(box(3)) < 0 And Math.Abs(CDbl(box(1)) + CDbl(box(3))) < 10), "Left value must be less than right")
                     bbox = $"({SQLdr("bbox")})"
+                    Dim bounds = ParseBox(SQLdr("bbox"))
                 End If
                 query = $"[out:json][timeout:100];
                         {criteria};
@@ -462,6 +462,36 @@ There are some additional folders which are closed by default. You must open the
         End If
         If Not SQLdr.IsClosed Then SQLdr.Close()
         Return 1
+    End Function
+
+    Function ParseBox(bbox As String) As Geometry
+        ' Convert a Bounding Box specification to a multipoint
+        ' It may be a bbox of form "a,b,c,d",  or a polygon of form "poly:a b c d e f g h i j"
+        Dim mpb As New MultipointBuilder(SpatialReferences.Wgs84), result As Multipoint = Nothing
+        If IsDBNullorEmpty(bbox) Then Return result        ' no bounds
+        Dim groups = bbox.Split(",")
+        If groups.Count = 4 Then
+            mpb.Points.Add(New MapPoint(CDbl(groups(1)), CDbl(groups(0))))
+            mpb.Points.Add(New MapPoint(CDbl(groups(1)), CDbl(groups(2))))
+            mpb.Points.Add(New MapPoint(CDbl(groups(3)), CDbl(groups(2))))
+            mpb.Points.Add(New MapPoint(CDbl(groups(3)), CDbl(groups(0))))
+            mpb.Points.Add(New MapPoint(CDbl(groups(1)), CDbl(groups(0))))
+            result = mpb.ToGeometry
+        Else
+            Dim matches = Regex.Match(bbox, "^poly:""([\d\.\- ]+)""$")
+            If matches.success Then
+                Dim data = Split(matches.Groups(1).Value, " ")      ' split space separated list of coordinates
+                Dim X As Double, Y As Double
+                Debug.Assert(data.Count Mod 2 = 0, "Odd number of coordinates")
+                For i = 0 To data.Count - 1 Step 2
+                    Debug.Assert(Double.TryParse(data(i), Y), "Badly formed double")
+                    Debug.Assert(Double.TryParse(data(i + 1), X), "Badly formed double")
+                    mpb.Points.Add(New MapPoint(CDbl(X), CDbl(Y)))         ' add xy pair
+                Next
+                result = mpb.ToGeometry
+            End If
+        End If
+        Return result
     End Function
     Function CreatePolygon(plb As PolylineBuilder, relations As List(Of Integer), country As String) As Polygon
         ' Convert a polyline into a polygon
@@ -893,7 +923,7 @@ There are some additional folders which are closed by default. You must open the
 
     Private Sub MakeKMLToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles MakeKMLToolStripMenuItem.Click
         ' Make a KML file of all Entity boundaries
-        Dim DXCClist As New List(Of Integer), BoundingBoxes As New List(Of (name As String, box As Envelope))   ' bounding boxes to add at end
+        Dim DXCClist As New List(Of Integer), BoundingBoxes As New List(Of (name As String, box As String))   ' bounding boxes to add at end
         Dim sql As SqliteCommand, SQLdr As SqliteDataReader
 
         Dim BaseFilename As String = $"{Application.StartupPath}\KML\DXCC Map of the World"
@@ -912,8 +942,7 @@ There are some additional folders which are closed by default. You must open the
                 DXCClist.Add(SQLdr("DXCCnum"))
                 Dim BoundingBox = SQLdr("bbox")
                 If Not IsDBNullorEmpty(BoundingBox) Then
-                    Dim bb = Split(BoundingBox, ",")
-                    BoundingBoxes.Add((name:=SQLdr("Entity"), box:=New Envelope(CDbl(bb(1)), CDbl(bb(0)), CDbl(bb(3)), CDbl(bb(2)))))      ' add new bounding box
+                    BoundingBoxes.Add((name:=SQLdr("Entity"), box:=ParseBox(BoundingBox).ToJson))
                 End If
             End While
             SQLdr.Close()
@@ -1356,6 +1385,16 @@ There are some additional folders which are closed by default. You must open the
 
     Private Sub IOTACheckToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles IOTACheckToolStripMenuItem.Click
         IOTACheck
+    End Sub
+
+    Private Sub ParseBoxToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles ParseBoxToolStripMenuItem.Click
+        ' Test the Parse box function
+        Dim testcases As New List(Of (input As String, result As Boolean)) From {{("-15,-171,-14,-167", True)}, {("-53,165,-48,179.9", True)},
+            {("-53,165,-48", False)}, {("poly:""-12 -160 -12 -135 -27 -135 -17 -160 -12 -160""", True)}}
+        For Each testcase In testcases
+            Dim result = ParseBox(testcase.input) IsNot Nothing
+            AppendText(TextBox1, $"test case {testcase.input}, Expected result {testcase.result}, Passed {testcase.result = result}{vbCrLf}")
+        Next
     End Sub
 End Class
 

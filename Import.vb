@@ -1,15 +1,15 @@
-﻿Imports Esri.ArcGISRuntime.Data
-Imports Esri.ArcGISRuntime.Geometry
-Imports Microsoft.Data.Sqlite
-Imports Microsoft.VisualBasic.FileIO
-Imports System.IO
+﻿Imports System.IO
 Imports System.Net.Http
 Imports System.Text.Json.Nodes
 Imports System.Text.RegularExpressions
 Imports System.Web
 Imports System.Xml
 Imports System.Xml.XPath
+Imports Esri.ArcGISRuntime.Data
+Imports Esri.ArcGISRuntime.Geometry
 Imports HtmlAgilityPack
+Imports Microsoft.Data.Sqlite
+Imports Microsoft.VisualBasic.FileIO
 Module Import
     ' Module contains all import functions
     Sub ImportISO3166()
@@ -279,7 +279,7 @@ Module Import
     End Function
 
     Async Function ImportAntarcticBases() As Task
-        Dim responseString As String
+        Dim responseString As String = ""
         Using httpClient As New System.Net.Http.HttpClient()
             httpClient.Timeout = New TimeSpan(0, 10, 0)        ' 10 min timeout
             Dim url = "https://www.coolantarctica.com/Community/antarctic_bases.php"
@@ -341,9 +341,9 @@ Module Import
     End Function
 
     Async Function ImportIOTAGroups() As Task
-        Dim responseString As String, sql As SqliteCommand
+        Dim responseString As String = "", sql As SqliteCommand
         ' Get JSON data for all IOTA groups
-        Dim url = $"https://www.iota-world.org/rest/get/iota/groups?api_key={secrets.IOTA_API_KEY}"
+        Dim url = $"https://www.iota-world.org/rest/get/iota/groups?api_key={IOTA_API_KEY}"
         Using httpClient As New System.Net.Http.HttpClient()
             httpClient.Timeout = New TimeSpan(0, 10, 0)        ' 10 min timeout
             Try
@@ -401,9 +401,9 @@ Module Import
         End If
     End Function
     Async Function ImportIOTAIslands() As Task
-        Dim responseString As String, sql As SqliteCommand
+        Dim responseString As String = "", sql As SqliteCommand
         ' Get JSON data for all IOTA groups
-        Dim url = $"https://www.iota-world.org/rest/get/iota/islands?api_key={secrets.IOTA_API_KEY}"
+        Dim url = $"https://www.iota-world.org/rest/get/iota/islands?api_key={IOTA_API_KEY}"
         Using httpClient As New System.Net.Http.HttpClient()
             httpClient.Timeout = New TimeSpan(0, 10, 0)        ' 10 min timeout
             Try
@@ -452,9 +452,9 @@ Module Import
         End If
     End Function
     Async Function ImportIOTADXCCMatchesOneIOTA() As Task
-        Dim responseString As String, sql As SqliteCommand
+        Dim responseString As String = "", sql As SqliteCommand
         ' Get JSON data for all IOTA groups
-        Dim url = $"https://www.iota-world.org/rest/get/iota/dxccmatchesoneiota?api_key={secrets.IOTA_API_KEY}"
+        Dim url = $"https://www.iota-world.org/rest/get/iota/dxccmatchesoneiota?api_key={IOTA_API_KEY}"
         Using httpClient As New System.Net.Http.HttpClient()
             httpClient.Timeout = New TimeSpan(0, 10, 0)        ' 10 min timeout
             Try

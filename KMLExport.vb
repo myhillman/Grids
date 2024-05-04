@@ -1,19 +1,8 @@
-﻿Imports Esri.ArcGISRuntime.Geometry
-Imports System.IO
-Imports System.Windows.Forms.VisualStyles.VisualStyleElement
-Imports Microsoft.Data.Sqlite
-Imports Microsoft.EntityFrameworkCore.Storage
-Imports Esri.ArcGISRuntime.Ogc
+﻿Imports System.IO
 Imports System.Xml
 Imports System.Xml.XPath
-Imports System.Security.Cryptography
-Imports System.Runtime.InteropServices.JavaScript.JSType
-Imports Esri.ArcGISRuntime.Tasks.Offline
-Imports SQLitePCL
-Imports Windows.ApplicationModel.Contacts.DataProvider
-Imports Microsoft.VisualBasic.Logging
-Imports Esri.ArcGISRuntime.Mapping
-Imports System.Collections.Immutable
+Imports Esri.ArcGISRuntime.Geometry
+Imports Microsoft.Data.Sqlite
 
 Module KMLExport
 
@@ -144,7 +133,7 @@ Module KMLExport
         Next
         kml.WriteLine("</Folder>")
     End Sub
-    Sub BoundingBoxFolder(kml As StreamWriter, BoundingBoxes As List(Of (name As String, box As Envelope)))
+    Sub BoundingBoxFolder(kml As StreamWriter, BoundingBoxes As List(Of (name As String, box As String)))
         ' Create the Bounding Box folder
         Const DensifyDegrees = 5        ' ensure lines have resolution so the follow lat/lon lines
 
@@ -155,23 +144,14 @@ Module KMLExport
         kml.WriteLine("<visibility>0</visibility>")
         kml.WriteLine("<Style id=""bbox""><PolyStyle><fill>0</fill><outline>1</outline></PolyStyle><LineStyle><color>ffffffff</color><width>2</width></LineStyle></Style>")
         For Each BoundingBox In BoundingBoxes
-            ' Display bounding box as a polygon (self closing)
+            ' Display bounding box as a closed linestring
             kml.WriteLine($"<Placemark><name>{KMLescape(BoundingBox.name)}</name><visibility>0</visibility><styleUrl>#bbox</styleUrl>")
-            Dim plb As New PolylineBuilder(SpatialReferences.Wgs84)
-            With BoundingBox.box
-                plb.AddPoint(New MapPoint(.XMin, .YMin))
-                plb.AddPoint(New MapPoint(.XMin, .YMax))
-                plb.AddPoint(New MapPoint(.XMax, .YMax))
-                plb.AddPoint(New MapPoint(.XMax, .YMin))
-                plb.AddPoint(New MapPoint(.XMin, .YMin))
-            End With
-            Dim poly As New Polygon(plb.Parts)          ' create a polygon
-            If BoundingBox.name <> "Fiji" Then poly = GeometryEngine.Densify(poly, DensifyDegrees)    ' make more points so it follows lat/lon better. Exclude Fiji as Densify takes long path
-            For Each prt In poly.Parts
-                kml.WriteLine("<LineString>")
-                KMLcoordinates(kml, prt.Points.ToList, 2)
-                kml.WriteLine("</LineString>")
-            Next
+            Dim box As Multipoint = Geometry.FromJson(BoundingBox.box)        ' convert the json to geometry
+            If BoundingBox.name <> "Fiji" Then box = box.Densify(DensifyDegrees)    ' make more points so it follows lat/lon better. Exclude Fiji as Densify takes long path
+            ' Write out the linestring
+            kml.WriteLine("<LineString><tessellate>1</tessellate>")
+            KMLcoordinates(kml, box.Points.ToList, 2)
+            kml.WriteLine("</LineString>")
             kml.WriteLine($"</Placemark>")
         Next
         kml.WriteLine("</Folder>")
@@ -235,8 +215,8 @@ Module KMLExport
                     End With
                     kml.WriteLine($"</LineString>")
                     kml.WriteLine("</MultiGeometry>")
-                        kml.WriteLine($"</Placemark>")
-                    End With
+                    kml.WriteLine($"</Placemark>")
+                End With
             Next
             kml.WriteLine("</Folder>")
         Next
@@ -410,7 +390,7 @@ Module KMLExport
         Dim nsmgr As New XmlNamespaceManager(New NameTable())
         nsmgr.AddNamespace("x", ns.NamespaceName)
         Dim placemark = doc.XPathSelectElement("//x:Placemark[2]", nsmgr).ToString       ' find second placemark
-            Placemark = Strings.Replace(placemark, $" xmlns=""{ns}""", "")         ' remove pesky namespace
+        placemark = Strings.Replace(placemark, $" xmlns=""{ns}""", "")         ' remove pesky namespace
         kml.WriteLine(placemark)                ' write border to kml file
     End Sub
 
@@ -439,7 +419,7 @@ Module KMLExport
             Next
             If points.Count > 1 Then kml.WriteLine()    ' end of block
             index += BlockSize       ' next block
-        Loop Until index >= points.count    ' all points done
+        Loop Until index >= points.Count    ' all points done
         kml.Write("</coordinates>")
         If points.Count > 1 Then kml.WriteLine()
     End Sub
