@@ -134,5 +134,43 @@ Module Validate
         End Using
         Form1.AppendText(Form1.TextBox1, $"Done{vbCrLf}")
     End Sub
+
+    Public Sub AdjacentColourCheck()
+        ' Check that all adjacent entities have a different colour
+        ' The colours are 1=red, 2=green, 3=Blue, 4=Yellow, 5=Magenta
+        Dim countries As New List(Of (prefix As String, geom As Geometry, colour As Integer)), adjacent As New List(Of (prefix As String, colour As Integer)), sql As SqliteCommand, sqldr As SqliteDataReader
+        Using connect As New SqliteConnection(Form1.DXCC_DATA)
+            connect.Open()
+            sql = connect.CreateCommand
+            ' Read in geometry for all entities
+            sql.CommandText = "SELECT * FROM DXCC WHERE geometry is not NULL"
+            sqldr = sql.ExecuteReader
+            While sqldr.Read
+                countries.Add((prefix:=sqldr("prefix"), geom:=Geometry.FromJson(sqldr("geometry")), colour:=sqldr("colour")))
+            End While
+        End Using
+        Form1.AppendText(Form1.TextBox1, $"{countries.Count} countries loaded{vbCrLf}")
+        ' Test every country
+        With Form1.ProgressBar1
+            .Minimum = 0
+            .Maximum = countries.Count
+            .Value = 0
+        End With
+        For outer = 0 To countries.Count - 2
+            Form1.ProgressBar1.Value += 1
+            adjacent.Clear()
+            For inner = outer + 1 To countries.Count - 1
+                If outer <> inner Then
+                    If GeometryEngine.Touches(countries(outer).geom, countries(inner).geom) Then
+                        adjacent.Add((countries(inner).prefix, countries(inner).colour))            ' record adjacent country and colour
+                    End If
+                End If
+            Next
+            For Each item In adjacent
+                If item.colour = countries(outer).colour Then Form1.AppendText(Form1.TextBox1, $"Adjacent countries {countries(outer).prefix} and {item.prefix} share a colour{vbCrLf}")
+            Next
+        Next
+        Form1.AppendText(Form1.TextBox1, $"Done{vbCrLf}")
+    End Sub
 End Module
 

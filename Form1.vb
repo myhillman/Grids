@@ -411,14 +411,13 @@ There are some additional folders which are closed by default. You must open the
             End Using
 
             Dim response = JsonNode.Parse(responseString)
-            Dim elements As JsonNode = response!elements        ' both way and relation queries have an "elements" node
+            Dim elements As JsonNode = response!elements        ' root node for ways and relations
             If elements.AsArray.Count = 0 Then
                 MessageBox.Show($"No geometry found for {country} with query={query}")
                 Exit Function
             End If
 
             Dim plb As New PolylineBuilder(SpatialReferences.Wgs84), relations As New List(Of Integer), rel
-
             For Each element In elements.AsArray
                 Dim ElementType = element!type.ToString
                 rel = element!id
@@ -535,6 +534,7 @@ There are some additional folders which are closed by default. You must open the
             beforePoints += prt.PointCount
         Next
         ' Delete internal, shared ways.
+        GoTo skip
         With ProgressBar1
             .Minimum = 0
             .Maximum = plb.Parts.Count - 1
@@ -545,7 +545,7 @@ There are some additional folders which are closed by default. You must open the
             Dim PartNdx = plb.Parts(pi)
             ProgressBar1.Value = partindex
             If Not PartNdx.IsEmpty Then
-                If Not PartNdx.StartPoint.IsEqual(PartNdx.EndPoint) Then      ' ignore closed ways
+                If Not CoIncident(PartNdx.StartPoint, PartNdx.EndPoint) Then      ' ignore closed ways
                     touches = plb.Parts.Select(Function(prt, i) New With {.value = prt, .index = i}).Where(Function(item) Not item.value.IsEmpty AndAlso item.index <> pi AndAlso
                        ((CoIncident(PartNdx.StartPoint, item.value.StartPoint) And CoIncident(PartNdx.EndPoint, item.value.EndPoint)) Or (CoIncident(PartNdx.StartPoint, item.value.EndPoint) And CoIncident(PartNdx.EndPoint, item.value.StartPoint))) AndAlso
                         relations(pi) <> relations(item.index)).ToList
@@ -566,12 +566,13 @@ There are some additional folders which are closed by default. You must open the
                 RemovedEdges += 1
             End If
         Next
+
         AppendText(TextBox1, $"{RemovedEdges} internal edges removed{vbCrLf}")
         If plb.Parts.Count = 0 Then
             plb = original        ' restore original
             MsgBox("Polygon empty", vbCritical + vbOKOnly, "Polygon empty")
         End If
-
+skip:
         While Not finished
             AppendText(TextBox1, $"Pass {pass}, ways {plb.Parts.Count} ")
             PassWatch.Restart()      ' time each pass
@@ -684,7 +685,7 @@ There are some additional folders which are closed by default. You must open the
 
         ' We frequently see a situation where we have an outer ring inside another outer ring. The outer ring is usually the administrative boundary
         ' whilst the inner ring is the land boundary. In this case we remove the outer ring.
-        Dim OuterRemoval As New List(Of String) From {"Austral Is", "Martinique", "Bonaire", "Christmas Is", "Clipperton Is", "Lakshadweep Is", "Sable Is", "Scarborough Reef", "St Paul Is", "St. Pierre & Miquelon", "Marquesas Is", "Wake Is", "Willis Is"}     ' countires which need outer ring removed
+        Dim OuterRemoval As New List(Of String) From {"Austral Is", "Aves Is", "Martinique", "Bonaire", "Christmas Is", "Clipperton Is", "Lakshadweep Is", "Sable Is", "Scarborough Reef", "St Paul Is", "St. Pierre & Miquelon", "Taiwan", "Marquesas Is", "Wake Is", "Willis Is"}     ' countires which need outer ring removed
         If OuterRemoval.Contains(country) Then
             '**********************************************
             ' Make a separate polygon for every part so we can use spatial comparisons
@@ -698,15 +699,22 @@ There are some additional folders which are closed by default. You must open the
                 polygons.Add((poly1, wind))
             Next
             Dim OutersRemoved As Integer = 0
+            ' For each inner, delete the corresponding outer
             For outer = 0 To plb.Parts.Count - 1
-                If polygons(outer).winding = Winding.Outer Then        ' it's an outer ring
-                    plb.Parts(outer).Clear()      ' erase outer polygon
-                    OutersRemoved += 1
+                If polygons(outer).winding = Winding.Inner Then        ' it's an inner ring - look for enclosing ring
+                    For inner = 0 To plb.Parts.Count - 1
+                        If outer <> inner Then
+                            If GeometryEngine.Contains(polygons(inner).poly, polygons(outer).poly) Then
+                                plb.Parts(outer).Clear()        ' remove inner
+                                OutersRemoved += 1
+                            End If
+                        End If
+                    Next
                 End If
             Next
             If OutersRemoved > 0 Then
                 poly = New Polygon(plb.Parts)           ' put polygon back together
-                poly = poly.Simplify    ' make sure all polygons have correct winding direction
+                'poly = poly.Simplify    ' make sure all polygons have correct winding direction
                 AppendText(TextBox1, $"{OutersRemoved} outer boundaries removed{vbCrLf}")
             End If
         End If
@@ -1395,6 +1403,10 @@ There are some additional folders which are closed by default. You must open the
             Dim result = ParseBox(testcase.input) IsNot Nothing
             AppendText(TextBox1, $"test case {testcase.input}, Expected result {testcase.result}, Passed {testcase.result = result}{vbCrLf}")
         Next
+    End Sub
+
+    Private Sub AdjacentColorCheckToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles AdjacentColorCheckToolStripMenuItem.Click
+        AdjacentColourCheck
     End Sub
 End Class
 

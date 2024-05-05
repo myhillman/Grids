@@ -31,12 +31,7 @@ Partial Class Form1
         MakeKMLAllEntitiesToolStripMenuItem = New ToolStripMenuItem()
         MakeShapefileToolStripMenuItem = New ToolStripMenuItem()
         EntityReportToolStripMenuItem = New ToolStripMenuItem()
-        CheckISO3166ReferencesToolStripMenuItem = New ToolStripMenuItem()
         ReprocessCountryToolStripMenuItem = New ToolStripMenuItem()
-        CountryCollisionsToolStripMenuItem = New ToolStripMenuItem()
-        RemoveEmptyGeometryToolStripMenuItem = New ToolStripMenuItem()
-        IOTACheckToolStripMenuItem = New ToolStripMenuItem()
-        InnerRingsToolStripMenuItem = New ToolStripMenuItem()
         ExitToolStripMenuItem = New ToolStripMenuItem()
         ImportToolStripMenuItem = New ToolStripMenuItem()
         ImportISO3166ToolStripMenuItem = New ToolStripMenuItem()
@@ -50,17 +45,24 @@ Partial Class Form1
         ImportIOTAGroupsToolStripMenuItem = New ToolStripMenuItem()
         ImportIOTAIslandsToolStripMenuItem = New ToolStripMenuItem()
         ImportIOTADXCCMatchesOneIOTAToolStripMenuItem = New ToolStripMenuItem()
+        ChecksToolStripMenuItem = New ToolStripMenuItem()
+        CheckISO3166ReferencesToolStripMenuItem = New ToolStripMenuItem()
+        CountryCollisionsToolStripMenuItem = New ToolStripMenuItem()
+        RemoveEmptyGeometryToolStripMenuItem = New ToolStripMenuItem()
+        IOTACheckToolStripMenuItem = New ToolStripMenuItem()
+        InnerRingsToolStripMenuItem = New ToolStripMenuItem()
+        AdjacentColorCheckToolStripMenuItem = New ToolStripMenuItem()
+        TestToolStripMenuItem = New ToolStripMenuItem()
+        ParseBoxToolStripMenuItem = New ToolStripMenuItem()
         TextBox1 = New TextBox()
         ProgressBar1 = New ProgressBar()
         DummyToolStripMenuItem = New ToolStripMenuItem()
-        TestToolStripMenuItem = New ToolStripMenuItem()
-        ParseBoxToolStripMenuItem = New ToolStripMenuItem()
         MenuStrip1.SuspendLayout()
         SuspendLayout()
         ' 
         ' MenuStrip1
         ' 
-        MenuStrip1.Items.AddRange(New ToolStripItem() {UseShapefileToolStripMenuItem, ImportToolStripMenuItem, TestToolStripMenuItem})
+        MenuStrip1.Items.AddRange(New ToolStripItem() {UseShapefileToolStripMenuItem, ImportToolStripMenuItem, ChecksToolStripMenuItem, TestToolStripMenuItem})
         MenuStrip1.Location = New Point(0, 0)
         MenuStrip1.Name = "MenuStrip1"
         MenuStrip1.Size = New Size(1286, 24)
@@ -69,7 +71,7 @@ Partial Class Form1
         ' 
         ' UseShapefileToolStripMenuItem
         ' 
-        UseShapefileToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {UseShapefileToolStripMenuItem1, UseOSMToolStripMenuItem, MakeKMLToolStripMenuItem, MakeKMLByCQZoneToolStripMenuItem, MakeKMLAllEntitiesToolStripMenuItem, MakeShapefileToolStripMenuItem, EntityReportToolStripMenuItem, CheckISO3166ReferencesToolStripMenuItem, ReprocessCountryToolStripMenuItem, CountryCollisionsToolStripMenuItem, RemoveEmptyGeometryToolStripMenuItem, IOTACheckToolStripMenuItem, InnerRingsToolStripMenuItem, ExitToolStripMenuItem})
+        UseShapefileToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {UseShapefileToolStripMenuItem1, UseOSMToolStripMenuItem, MakeKMLToolStripMenuItem, MakeKMLByCQZoneToolStripMenuItem, MakeKMLAllEntitiesToolStripMenuItem, MakeShapefileToolStripMenuItem, EntityReportToolStripMenuItem, ReprocessCountryToolStripMenuItem, ExitToolStripMenuItem})
         UseShapefileToolStripMenuItem.Name = "UseShapefileToolStripMenuItem"
         UseShapefileToolStripMenuItem.Size = New Size(37, 20)
         UseShapefileToolStripMenuItem.Text = "File"
@@ -77,85 +79,55 @@ Partial Class Form1
         ' UseShapefileToolStripMenuItem1
         ' 
         UseShapefileToolStripMenuItem1.Name = "UseShapefileToolStripMenuItem1"
-        UseShapefileToolStripMenuItem1.Size = New Size(209, 22)
+        UseShapefileToolStripMenuItem1.Size = New Size(194, 22)
         UseShapefileToolStripMenuItem1.Text = "Use shapefile"
         ' 
         ' UseOSMToolStripMenuItem
         ' 
         UseOSMToolStripMenuItem.Name = "UseOSMToolStripMenuItem"
-        UseOSMToolStripMenuItem.Size = New Size(209, 22)
+        UseOSMToolStripMenuItem.Size = New Size(194, 22)
         UseOSMToolStripMenuItem.Text = "Use OSM"
         ' 
         ' MakeKMLToolStripMenuItem
         ' 
         MakeKMLToolStripMenuItem.Name = "MakeKMLToolStripMenuItem"
-        MakeKMLToolStripMenuItem.Size = New Size(209, 22)
+        MakeKMLToolStripMenuItem.Size = New Size(194, 22)
         MakeKMLToolStripMenuItem.Text = "Make KML"
         ' 
         ' MakeKMLByCQZoneToolStripMenuItem
         ' 
         MakeKMLByCQZoneToolStripMenuItem.Name = "MakeKMLByCQZoneToolStripMenuItem"
-        MakeKMLByCQZoneToolStripMenuItem.Size = New Size(209, 22)
+        MakeKMLByCQZoneToolStripMenuItem.Size = New Size(194, 22)
         MakeKMLByCQZoneToolStripMenuItem.Text = "Make KML by CQ zone"
         ' 
         ' MakeKMLAllEntitiesToolStripMenuItem
         ' 
         MakeKMLAllEntitiesToolStripMenuItem.Name = "MakeKMLAllEntitiesToolStripMenuItem"
-        MakeKMLAllEntitiesToolStripMenuItem.Size = New Size(209, 22)
+        MakeKMLAllEntitiesToolStripMenuItem.Size = New Size(194, 22)
         MakeKMLAllEntitiesToolStripMenuItem.Text = "Make KML all entities"
         ' 
         ' MakeShapefileToolStripMenuItem
         ' 
         MakeShapefileToolStripMenuItem.Name = "MakeShapefileToolStripMenuItem"
-        MakeShapefileToolStripMenuItem.Size = New Size(209, 22)
+        MakeShapefileToolStripMenuItem.Size = New Size(194, 22)
         MakeShapefileToolStripMenuItem.Text = "Make Shapefile"
         ' 
         ' EntityReportToolStripMenuItem
         ' 
         EntityReportToolStripMenuItem.Name = "EntityReportToolStripMenuItem"
-        EntityReportToolStripMenuItem.Size = New Size(209, 22)
+        EntityReportToolStripMenuItem.Size = New Size(194, 22)
         EntityReportToolStripMenuItem.Text = "Entity Report"
-        ' 
-        ' CheckISO3166ReferencesToolStripMenuItem
-        ' 
-        CheckISO3166ReferencesToolStripMenuItem.Name = "CheckISO3166ReferencesToolStripMenuItem"
-        CheckISO3166ReferencesToolStripMenuItem.Size = New Size(209, 22)
-        CheckISO3166ReferencesToolStripMenuItem.Text = "Check ISO3166 references"
         ' 
         ' ReprocessCountryToolStripMenuItem
         ' 
         ReprocessCountryToolStripMenuItem.Name = "ReprocessCountryToolStripMenuItem"
-        ReprocessCountryToolStripMenuItem.Size = New Size(209, 22)
+        ReprocessCountryToolStripMenuItem.Size = New Size(194, 22)
         ReprocessCountryToolStripMenuItem.Text = "Reprocess country"
-        ' 
-        ' CountryCollisionsToolStripMenuItem
-        ' 
-        CountryCollisionsToolStripMenuItem.Name = "CountryCollisionsToolStripMenuItem"
-        CountryCollisionsToolStripMenuItem.Size = New Size(209, 22)
-        CountryCollisionsToolStripMenuItem.Text = "Country Collisions"
-        ' 
-        ' RemoveEmptyGeometryToolStripMenuItem
-        ' 
-        RemoveEmptyGeometryToolStripMenuItem.Name = "RemoveEmptyGeometryToolStripMenuItem"
-        RemoveEmptyGeometryToolStripMenuItem.Size = New Size(209, 22)
-        RemoveEmptyGeometryToolStripMenuItem.Text = "Remove empty geometry"
-        ' 
-        ' IOTACheckToolStripMenuItem
-        ' 
-        IOTACheckToolStripMenuItem.Name = "IOTACheckToolStripMenuItem"
-        IOTACheckToolStripMenuItem.Size = New Size(209, 22)
-        IOTACheckToolStripMenuItem.Text = "IOTA check"
-        ' 
-        ' InnerRingsToolStripMenuItem
-        ' 
-        InnerRingsToolStripMenuItem.Name = "InnerRingsToolStripMenuItem"
-        InnerRingsToolStripMenuItem.Size = New Size(209, 22)
-        InnerRingsToolStripMenuItem.Text = "Inner rings"
         ' 
         ' ExitToolStripMenuItem
         ' 
         ExitToolStripMenuItem.Name = "ExitToolStripMenuItem"
-        ExitToolStripMenuItem.Size = New Size(209, 22)
+        ExitToolStripMenuItem.Size = New Size(194, 22)
         ExitToolStripMenuItem.Text = "Exit"
         ' 
         ' ImportToolStripMenuItem
@@ -232,6 +204,62 @@ Partial Class Form1
         ImportIOTADXCCMatchesOneIOTAToolStripMenuItem.Size = New Size(269, 22)
         ImportIOTADXCCMatchesOneIOTAToolStripMenuItem.Text = "Import IOTA DXCC matches one IOTA"
         ' 
+        ' ChecksToolStripMenuItem
+        ' 
+        ChecksToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {CheckISO3166ReferencesToolStripMenuItem, CountryCollisionsToolStripMenuItem, RemoveEmptyGeometryToolStripMenuItem, IOTACheckToolStripMenuItem, InnerRingsToolStripMenuItem, AdjacentColorCheckToolStripMenuItem})
+        ChecksToolStripMenuItem.Name = "ChecksToolStripMenuItem"
+        ChecksToolStripMenuItem.Size = New Size(57, 20)
+        ChecksToolStripMenuItem.Text = "Checks"
+        ' 
+        ' CheckISO3166ReferencesToolStripMenuItem
+        ' 
+        CheckISO3166ReferencesToolStripMenuItem.Name = "CheckISO3166ReferencesToolStripMenuItem"
+        CheckISO3166ReferencesToolStripMenuItem.Size = New Size(209, 22)
+        CheckISO3166ReferencesToolStripMenuItem.Text = "Check ISO3166 references"
+        ' 
+        ' CountryCollisionsToolStripMenuItem
+        ' 
+        CountryCollisionsToolStripMenuItem.Name = "CountryCollisionsToolStripMenuItem"
+        CountryCollisionsToolStripMenuItem.Size = New Size(209, 22)
+        CountryCollisionsToolStripMenuItem.Text = "Country Collisions"
+        ' 
+        ' RemoveEmptyGeometryToolStripMenuItem
+        ' 
+        RemoveEmptyGeometryToolStripMenuItem.Name = "RemoveEmptyGeometryToolStripMenuItem"
+        RemoveEmptyGeometryToolStripMenuItem.Size = New Size(209, 22)
+        RemoveEmptyGeometryToolStripMenuItem.Text = "Remove empty geometry"
+        ' 
+        ' IOTACheckToolStripMenuItem
+        ' 
+        IOTACheckToolStripMenuItem.Name = "IOTACheckToolStripMenuItem"
+        IOTACheckToolStripMenuItem.Size = New Size(209, 22)
+        IOTACheckToolStripMenuItem.Text = "IOTA check"
+        ' 
+        ' InnerRingsToolStripMenuItem
+        ' 
+        InnerRingsToolStripMenuItem.Name = "InnerRingsToolStripMenuItem"
+        InnerRingsToolStripMenuItem.Size = New Size(209, 22)
+        InnerRingsToolStripMenuItem.Text = "Inner rings"
+        ' 
+        ' AdjacentColorCheckToolStripMenuItem
+        ' 
+        AdjacentColorCheckToolStripMenuItem.Name = "AdjacentColorCheckToolStripMenuItem"
+        AdjacentColorCheckToolStripMenuItem.Size = New Size(209, 22)
+        AdjacentColorCheckToolStripMenuItem.Text = "Adjacent color check"
+        ' 
+        ' TestToolStripMenuItem
+        ' 
+        TestToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {ParseBoxToolStripMenuItem})
+        TestToolStripMenuItem.Name = "TestToolStripMenuItem"
+        TestToolStripMenuItem.Size = New Size(39, 20)
+        TestToolStripMenuItem.Text = "Test"
+        ' 
+        ' ParseBoxToolStripMenuItem
+        ' 
+        ParseBoxToolStripMenuItem.Name = "ParseBoxToolStripMenuItem"
+        ParseBoxToolStripMenuItem.Size = New Size(122, 22)
+        ParseBoxToolStripMenuItem.Text = "ParseBox"
+        ' 
         ' TextBox1
         ' 
         TextBox1.Location = New Point(12, 27)
@@ -252,19 +280,6 @@ Partial Class Form1
         ' 
         DummyToolStripMenuItem.Name = "DummyToolStripMenuItem"
         DummyToolStripMenuItem.Size = New Size(32, 19)
-        ' 
-        ' TestToolStripMenuItem
-        ' 
-        TestToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {ParseBoxToolStripMenuItem})
-        TestToolStripMenuItem.Name = "TestToolStripMenuItem"
-        TestToolStripMenuItem.Size = New Size(39, 20)
-        TestToolStripMenuItem.Text = "Test"
-        ' 
-        ' ParseBoxToolStripMenuItem
-        ' 
-        ParseBoxToolStripMenuItem.Name = "ParseBoxToolStripMenuItem"
-        ParseBoxToolStripMenuItem.Size = New Size(180, 22)
-        ParseBoxToolStripMenuItem.Text = "ParseBox"
         ' 
         ' Form1
         ' 
@@ -316,5 +331,7 @@ Partial Class Form1
     Friend WithEvents IOTACheckToolStripMenuItem As ToolStripMenuItem
     Friend WithEvents TestToolStripMenuItem As ToolStripMenuItem
     Friend WithEvents ParseBoxToolStripMenuItem As ToolStripMenuItem
+    Friend WithEvents AdjacentColorCheckToolStripMenuItem As ToolStripMenuItem
+    Friend WithEvents ChecksToolStripMenuItem As ToolStripMenuItem
 
 End Class

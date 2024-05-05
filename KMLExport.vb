@@ -146,8 +146,14 @@ Module KMLExport
         For Each BoundingBox In BoundingBoxes
             ' Display bounding box as a closed linestring
             kml.WriteLine($"<Placemark><name>{KMLescape(BoundingBox.name)}</name><visibility>0</visibility><styleUrl>#bbox</styleUrl>")
+            ' Densify the bounding box so that it clearly follows lat/lon lines better. Exclude Fiji as Densify takes long path
+            ' You can't seem to Densify a  Multipoint, so convert to Polygon, Densify, and convert back to Multipoint
             Dim box As Multipoint = Geometry.FromJson(BoundingBox.box)        ' convert the json to geometry
-            If BoundingBox.name <> "Fiji" Then box = box.Densify(DensifyDegrees)    ' make more points so it follows lat/lon better. Exclude Fiji as Densify takes long path
+            If BoundingBox.name <> "Fiji" Then
+                Dim PolyBox As New Polygon(box.Points)          ' Convert to Polygon
+                PolyBox = PolyBox.Densify(DensifyDegrees)       ' Densify
+                box = New Multipoint(PolyBox.Parts(0).Points)   ' Convert back to Multipoint
+            End If
             ' Write out the linestring
             kml.WriteLine("<LineString><tessellate>1</tessellate>")
             KMLcoordinates(kml, box.Points.ToList, 2)
@@ -165,7 +171,7 @@ Module KMLExport
         kml.WriteLine("<name>Grid Squares</name>")
         kml.WriteLine("<description>Gridsquare overlay</description>")
         kml.WriteLine("<visibility>0</visibility>")
-        kml.WriteLine("<Style id=""grid""><LabelStyle><color>ff000000</color><scale>2</scale></LabelStyle><IconStyle><Icon></Icon></IconStyle><PolyStyle><color>3fffffff</color><fill>0</fill><outline>1</outline></PolyStyle><LineStyle><color>ff000000</color><width>1</width></LineStyle></Style>")
+        kml.WriteLine("<Style id=""grid""><LabelStyle><color>ff000000</color><scale>2</scale></LabelStyle><IconStyle><Icon></Icon></IconStyle><PolyStyle><color>3fffffff</color><fill>0</fill><outline>1</outline></PolyStyle><LineStyle><color>ff000000</color><width>2</width></LineStyle></Style>")
 
         sql = connect.CreateCommand
         For Each DXCC In DXCClist
