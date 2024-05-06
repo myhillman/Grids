@@ -274,8 +274,28 @@ Module Import
         With qp
             .WhereClause = "COUNTRY='Antarctica'"            ' get all features
             .ReturnGeometry = True
+            .OutSpatialReference = SpatialReferences.Wgs84
         End With
         Dim fqr = Await Features.QueryFeaturesAsync(qp)
+        Dim plb As New PolygonBuilder(SpatialReferences.Wgs84)
+        For Each f In fqr
+            Dim geom As Polygon = f.Geometry
+            For Each p In geom.Parts
+                plb.AddPart(p)
+            Next
+        Next
+            Dim poly As New Polygon(plb.Parts)
+        Dim polyGeneralized = Form1.GeneralizeByPart(poly)   ' reduce it in size
+        Dim geometry = polyGeneralized.ToJson           ' convert to json
+        ' Save in database
+        Using connect As New SqliteConnection(Form1.DXCC_DATA)
+            Dim sql As SqliteCommand
+            connect.Open()
+            sql = connect.CreateCommand
+            sql.CommandText = $"UPDATE DXCC SET geometry='{geometry}' WHERE Entity='Antarctica'"
+            sql.ExecuteNonQuery()
+        End Using
+        Form1.AppendText(Form1.TextBox1, $"Done{vbCrLf}")
     End Function
 
     Async Function ImportAntarcticBases() As Task

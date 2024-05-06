@@ -57,6 +57,7 @@ Partial Class Form1
         TextBox1 = New TextBox()
         ProgressBar1 = New ProgressBar()
         DummyToolStripMenuItem = New ToolStripMenuItem()
+        ImportAntarcticaToolStripMenuItem = New ToolStripMenuItem()
         MenuStrip1.SuspendLayout()
         SuspendLayout()
         ' 
@@ -132,7 +133,7 @@ Partial Class Form1
         ' 
         ' ImportToolStripMenuItem
         ' 
-        ImportToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {ImportISO3166ToolStripMenuItem, ImportEUASBorderToolStripMenuItem, ImportCQITUZonesToolStripMenuItem, ImportTimezonesToolStripMenuItem, ImportIARURegionsToolStripMenuItem, UseOSMLandPolygonsToolStripMenuItem, ImportAntarcticBasesToolStripMenuItem, ImportIOTAToolStripMenuItem})
+        ImportToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {ImportISO3166ToolStripMenuItem, ImportEUASBorderToolStripMenuItem, ImportCQITUZonesToolStripMenuItem, ImportTimezonesToolStripMenuItem, ImportIARURegionsToolStripMenuItem, UseOSMLandPolygonsToolStripMenuItem, ImportAntarcticBasesToolStripMenuItem, ImportIOTAToolStripMenuItem, ImportAntarcticaToolStripMenuItem})
         ImportToolStripMenuItem.Name = "ImportToolStripMenuItem"
         ImportToolStripMenuItem.Size = New Size(55, 20)
         ImportToolStripMenuItem.Text = "Import"
@@ -281,6 +282,12 @@ Partial Class Form1
         DummyToolStripMenuItem.Name = "DummyToolStripMenuItem"
         DummyToolStripMenuItem.Size = New Size(32, 19)
         ' 
+        ' ImportAntarcticaToolStripMenuItem
+        ' 
+        ImportAntarcticaToolStripMenuItem.Name = "ImportAntarcticaToolStripMenuItem"
+        ImportAntarcticaToolStripMenuItem.Size = New Size(217, 22)
+        ImportAntarcticaToolStripMenuItem.Text = "Import Antarctica"
+        ' 
         ' Form1
         ' 
         AutoScaleDimensions = New SizeF(7F, 15F)
@@ -333,5 +340,6 @@ Partial Class Form1
     Friend WithEvents ParseBoxToolStripMenuItem As ToolStripMenuItem
     Friend WithEvents AdjacentColorCheckToolStripMenuItem As ToolStripMenuItem
     Friend WithEvents ChecksToolStripMenuItem As ToolStripMenuItem
+    Friend WithEvents ImportAntarcticaToolStripMenuItem As ToolStripMenuItem
 
 End Class

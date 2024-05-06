@@ -9,6 +9,7 @@ Imports Esri.ArcGISRuntime
 Imports Esri.ArcGISRuntime.Data
 Imports Esri.ArcGISRuntime.Geometry
 Imports Microsoft.Data.Sqlite
+Imports Microsoft.EntityFrameworkCore
 
 Enum Winding
     Outer = 1
@@ -46,7 +47,8 @@ There are some additional folders which are closed by default. You must open the
 <tr><td>Antarctic bases</td><td>Location and basic details of Antarctic bases.</td></tr>
 <tr><td>Bounding boxes</td><td>To extract the entity data it was sometimes necessary to use a bounding box to filter the returned geometry. Open this folder will display those boxes. They are not much use in normal operation, but are used for debugging.</td></tr>
 </table>
-<br>Data created {Now:R}
+<br>A huge thank you to Peter Forbes (VK3QI) who used his extensive knowledge and awesome research skills to validate all the data.
+<br><br>Data created {Now:R}
 ]]>
 </description><gx:balloonVisibility>1</gx:balloonVisibility></Placemark>
 <Style id=""red""><PolyStyle><color>9F0000Ff</color><fill>1</fill><outline>1</outline></PolyStyle><LineStyle><color>ff0000ff</color><width>2</width></LineStyle></Style>
@@ -417,43 +419,27 @@ There are some additional folders which are closed by default. You must open the
                 Exit Function
             End If
 
-            Dim plb As New PolylineBuilder(SpatialReferences.Wgs84), relations As New List(Of Integer), rel
+            Dim plb As New PolylineBuilder(SpatialReferences.Wgs84)
+            Dim refList As New List(Of Integer)         ' list of way references already processed. Need to skip duplicates
             For Each element In elements.AsArray
                 Dim ElementType = element!type.ToString
-                rel = element!id
                 Select Case ElementType
                     Case "relation"
                         Dim members As JsonArray = element!members
                         ' populate polylinebuilder with ways as linestrings
-                        For Each member As JsonObject In members
+                        For Each member As JsonNode In members
                             Dim ty As String = member!type
                             If ty = "way" Then      ' a linestring
-                                Dim way = New Part(plb.SpatialReference)
-                                For Each pnt In member!geometry.AsArray
-                                    If pnt IsNot Nothing Then way.AddPoint(CDbl(pnt("lon")), CDbl(pnt("lat")))
-                                Next
-                                If Not way.IsEmpty Then
-                                    plb.AddPart(way)
-                                    relations.Add(CInt(rel.ToString))      ' the reference for this way
-                                End If
+                                ProcessWay(member, plb, refList)
                             End If
                         Next
                     Case "way"
-                        ' it's a way
-                        Dim way = New Part(plb.SpatialReference)
-                        For Each pnt In element!geometry.AsArray
-                            If pnt IsNot Nothing Then way.AddPoint(CDbl(pnt("lon")), CDbl(pnt("lat")))
-                        Next
-                        If Not way.IsEmpty Then
-                            plb.AddPart(way)
-                            relations.Add(CInt(rel.ToString))      ' the reference for this way
-                        End If
+                        ProcessWay(element, plb, refList)
                 End Select
             Next
 
             'Connectivity(plb)
-            'Repair(plb)
-            Dim poly As Polygon = CreatePolygon(plb, relations, country)
+            Dim poly As Polygon = CreatePolygon(plb, country)
             geometry = poly.ToJson           ' convert to json
             SQLdr.Close()
             sql.CommandText = $"UPDATE `DXCC` SET `geometry`='{geometry}' WHERE `DXCCnum`={dxcc}"
@@ -463,6 +449,29 @@ There are some additional folders which are closed by default. You must open the
         Return 1
     End Function
 
+    Sub ProcessWay(json As JsonNode, ByRef plb As PolylineBuilder, refList As List(Of Integer))
+        ' Process an individual way
+        Dim ref As Integer
+        If json!ref IsNot Nothing Then
+            ref = json!ref
+        Else
+            If json!id IsNot Nothing Then
+                ref = json!id
+            Else
+                MsgBox("way does not have ref or id", vbCritical + vbOKOnly, "Missing ref/id")
+            End If
+        End If
+        If Not refList.Contains(ref) Then       ' don't process twice
+            refList.Add(ref)
+            Dim way = New Part(plb.SpatialReference)
+            For Each pnt In json!geometry.AsArray
+                If pnt IsNot Nothing Then way.AddPoint(CDbl(pnt("lon")), CDbl(pnt("lat")))
+            Next
+            If Not way.IsEmpty And way.Points.Count > 0 Then
+                plb.AddPart(way)
+            End If
+        End If
+    End Sub
     Function ParseBox(bbox As String) As Geometry
         ' Convert a Bounding Box specification to a multipoint
         ' It may be a bbox of form "a,b,c,d",  or a polygon of form "poly:a b c d e f g h i j"
@@ -492,7 +501,7 @@ There are some additional folders which are closed by default. You must open the
         End If
         Return result
     End Function
-    Function CreatePolygon(plb As PolylineBuilder, relations As List(Of Integer), country As String) As Polygon
+    Function CreatePolygon(plb As PolylineBuilder, country As String) As Polygon
         ' Convert a polyline into a polygon
         ' the ways retrieved are disjoint fragments of polygons.
         ' We must connect up the disjoint fragments.
@@ -500,8 +509,7 @@ There are some additional folders which are closed by default. You must open the
 
         ' It is a 2 pass process
         ' 1. Look for shared borders and remove them. For countries that are created by an amalgamation of states, e.g. the Russia's and India,
-        '    adjacent states will each have an identical border. We don't want internal borders, so remove any ways that share a start/end point. Borders can only be shared if
-        '    they in different relations.
+        '    adjacent states will each have an identical border. We don't want internal borders, so remove any ways that share a start/end point. 
         ' 2. Connect all ways that have a connection to only one other way. Ignore situation where three or more ways are joined (shouldn't be any).
 
         Dim finished As Boolean = False
@@ -533,46 +541,9 @@ There are some additional folders which are closed by default. You must open the
         For Each prt In plb.Parts
             beforePoints += prt.PointCount
         Next
-        ' Delete internal, shared ways.
-        GoTo skip
-        With ProgressBar1
-            .Minimum = 0
-            .Maximum = plb.Parts.Count - 1
-            .Step = 10
-        End With
-        For partindex = 0 To plb.Parts.Count - 1
-            Dim pi = partindex
-            Dim PartNdx = plb.Parts(pi)
-            ProgressBar1.Value = partindex
-            If Not PartNdx.IsEmpty Then
-                If Not CoIncident(PartNdx.StartPoint, PartNdx.EndPoint) Then      ' ignore closed ways
-                    touches = plb.Parts.Select(Function(prt, i) New With {.value = prt, .index = i}).Where(Function(item) Not item.value.IsEmpty AndAlso item.index <> pi AndAlso
-                       ((CoIncident(PartNdx.StartPoint, item.value.StartPoint) And CoIncident(PartNdx.EndPoint, item.value.EndPoint)) Or (CoIncident(PartNdx.StartPoint, item.value.EndPoint) And CoIncident(PartNdx.EndPoint, item.value.StartPoint))) AndAlso
-                        relations(pi) <> relations(item.index)).ToList
-                    If touches.count > 0 Then
-                        plb.Parts(partindex).Clear()
-                        For Each touch In touches
-                            plb.Parts(touch.index).Clear()
-                        Next
-                    End If
-                End If
-            End If
-        Next
-        ' remove deleted edges
-        Dim RemovedEdges = 0
-        For ndx = plb.Parts.Count - 1 To 0 Step -1
-            If plb.Parts(ndx).IsEmpty Then
-                plb.Parts.RemoveAt(ndx)
-                RemovedEdges += 1
-            End If
-        Next
 
-        AppendText(TextBox1, $"{RemovedEdges} internal edges removed{vbCrLf}")
-        If plb.Parts.Count = 0 Then
-            plb = original        ' restore original
-            MsgBox("Polygon empty", vbCritical + vbOKOnly, "Polygon empty")
-        End If
-skip:
+        Dissolve(plb) ' Delete internal, shared ways.
+
         While Not finished
             AppendText(TextBox1, $"Pass {pass}, ways {plb.Parts.Count} ")
             PassWatch.Restart()      ' time each pass
@@ -718,9 +689,7 @@ skip:
                 AppendText(TextBox1, $"{OutersRemoved} outer boundaries removed{vbCrLf}")
             End If
         End If
-        '**********************************************
 
-        'poly = Dissolve(poly)
         If poly.IsEmpty Then
             AppendText(TextBox1, $"WARNING: Simplified polygon is empty. Using original{vbCrLf}")
             poly = New Polygon(original.Parts)
@@ -782,120 +751,45 @@ skip:
         AppendText(TextBox1, $"{SelfClosed} ways were self closing{vbCrLf}")
     End Function
 
-    Public Function Dissolve(poly As Polygon)
-        ' Are there any overlapping polygons? If so, remove them
-        Dim intersects
-        Dim finished As Boolean = False, intersections As Integer
-        Dim PartsBefore As Integer = poly.Parts.Count
-        Dim plb As New PolylineBuilder(poly.Parts)      ' convert polygon to polyline so we can edit it
-
+    Public Sub Dissolve(ByRef plb As PolylineBuilder)
+        ' Remove internal boundaries. Boundary is internal if start and end point match, and ways have same number of points
         With ProgressBar1
             .Minimum = 0
             .Maximum = plb.Parts.Count - 1
-            .Step = 2
+            .Step = 10
         End With
-        While Not finished
-            intersections = 0
-            For outer = 0 To plb.Parts.Count - 1
-                Dim PartNdx = plb.Parts(outer)
-                Dim pi = outer
-                ProgressBar1.Value = outer
-                ' Is there an intersection of parts ?
-                intersects = plb.Parts.Select(Function(prt, i) New With {.value = prt, .index = i}).Where(Function(item) Not item.value.IsEmpty AndAlso item.index <> pi AndAlso PartNdx.Intersect(item.value) IsNot Nothing).ToList
-                If intersects.count > 0 Then
-                    ' touch to touch start. Is there also end to end?
-                    For Each intersect In intersects
-                        plb.Parts(outer) = plb.Parts(outer).Union(plb.Parts(intersect.index))   ' union the two together
-                        plb.Parts(intersect.index).Clear()
-                        intersections += 1
-                    Next
-                End If
-                ' remove empty parts
-                For ndx = plb.Parts.Count - 1 To 0 Step -1
-                    If plb.Parts(ndx).IsEmpty Then plb.Parts.RemoveAt(ndx)
-                Next
-            Next
-            If intersections = 0 Then finished = True
-        End While
-        Dim PartsAfter = plb.Parts.Count
-        AppendText(TextBox1, $"Dissolve reduced parts from {PartsBefore} to {PartsAfter}{vbCrLf}")
-        Return New Polygon(plb.Parts)
-    End Function
-    Private Function Repair(ByRef plb As PolylineBuilder)
-        ' every Way must have a connection to its begin and one to its end
-        ' if not, repair the way by connecting it to the closest other point
-
-        Dim touches As Integer?
-        With ProgressBar1
-            .Minimum = 0
-            .Maximum = plb.Parts.Count - 1
-            .Step = 2
-        End With
-        Dim nodes As New Dictionary(Of Tuple(Of Double, Double), Integer)
-        For Each prt In plb.Parts
-            Dim startpt As New Tuple(Of Double, Double)(prt.StartPoint.X, prt.StartPoint.Y)
-            Dim endpt As New Tuple(Of Double, Double)(prt.EndPoint.X, prt.EndPoint.Y)
-            If Not nodes.TryAdd(startpt, 1) Then
-                nodes(startpt) += 1
-            End If
-            If Not nodes.TryAdd(endpt, 1) Then
-                nodes(endpt) += 1
-            End If
-        Next
-        For Each n In nodes
-            If n.Value <> 2 Then
-                AppendText(TextBox1, $"node count= {n.Value}{vbCrLf}")
-            End If
-        Next
-        Exit Function
-        ' Remove any zero length ways
-        Dim removed As Integer = 0, closed As Integer = 0
-        For outer = plb.Parts.Count - 1 To 0 Step -1
-            If CoIncident(plb.Parts(outer).StartPoint, plb.Parts(outer).EndPoint) Then closed += 1
-            If plb.Parts(outer).PointCount <= 1 Then
-                AppendText(TextBox1, $"way {outer} has 0 length{vbCrLf}")
-                plb.Parts.RemoveAt(outer)           ' remove the way
-                removed += 1
-            ElseIf plb.Parts(outer).Count = 1 And CoIncident(plb.Parts(outer).StartPoint, plb.Parts(outer).EndPoint) Then
-                AppendText(TextBox1, $"way {outer} has 0 length{vbCrLf}")
-                plb.Parts.RemoveAt(outer)           ' remove the way
-                removed += 1
-            End If
-        Next
-        AppendText(TextBox1, $"{closed} closed ways found And {removed} empty ways removed{vbCrLf}")
-
-        For outer = 0 To plb.Parts.Count - 1
-            Try
-                ProgressBar1.Value = outer
-                If Not CoIncident(plb.Parts(outer).StartPoint, plb.Parts(outer).EndPoint) Then      ' only test non closed ways
-                    Dim pi As Integer = outer           ' local variable needed for lambda function
-                    Dim PartNdx As New Part(plb.Parts(outer))          ' local variable needed for lambda function
-
-                    Dim StartJoined As Boolean, FinishJoined As Boolean
-                    ' Does start of way touch another ?
-                    touches = plb.Parts.Select(Function(prt, i) New With {.value = prt, .index = i}).FirstOrDefault(Function(item) item.index <> pi AndAlso CoIncident(PartNdx.Points(0), item.value.Points(0)))?.index
-                    If touches Is Nothing Then touches = plb.Parts.Select(Function(prt, i) New With {.value = prt, .index = i}).FirstOrDefault(Function(item) item.index <> pi AndAlso CoIncident(PartNdx.Points(0), item.value.Points(item.value.Points.Count - 1)))?.index
-                    StartJoined = touches IsNot Nothing
-                    ' Does finish of way touch another ?
-                    touches = plb.Parts.Select(Function(prt, i) New With {.value = prt, .index = i}).FirstOrDefault(Function(item) item.index <> pi AndAlso CoIncident(PartNdx.Points(PartNdx.Points.Count - 1), item.value.Points(0)))?.index
-                    If touches Is Nothing Then touches = plb.Parts.Select(Function(prt, i) New With {.value = prt, .index = i}).FirstOrDefault(Function(item) item.index <> pi AndAlso CoIncident(PartNdx.Points(PartNdx.Points.Count - 1), item.value.Points(item.value.Points.Count - 1)))?.index
-                    FinishJoined = touches IsNot Nothing
-                    If Not StartJoined Or Not FinishJoined Then
-                        ' a way is missing a connection. Attempt to repair by replacing broken link point with closest point
-                        AppendText(TextBox1, $"Repair required On way {outer}{vbCrLf}")
-                        If Not StartJoined Then
-                            Dim NearestEnd = plb.Parts.OrderBy(Of Double)(Function(i) Not PartNdx.Equals(i) And GeometryEngine.Distance(PartNdx.Points(0), i.Points(i.Points.Count - 1))).First
-                            Dim index = plb.Parts.IndexOf(NearestEnd)
-                            AppendText(TextBox1, $"Nearest To start Of {outer} Is End Of {index}, Distance = {GeometryEngine.Distance(PartNdx.Points(0), plb.Parts(index).Points(plb.Parts(index).Points.Count - 1))}{vbCrLf}")
-                            index = index
+        Dim original = plb      ' keep in case solution is degenerate
+        For outer = 0 To plb.Parts.Count - 2
+            ProgressBar1.Value = outer
+            If Not plb.Parts(outer).IsEmpty Then
+                For inner = outer + 1 To plb.Parts.Count - 1
+                    If Not plb.Parts(inner).IsEmpty Then
+                        If Not (plb.Parts(inner).IsEmpty Or plb.Parts(outer).Points.Count = 0) Then
+                            If ((CoIncident(plb.Parts(outer).StartPoint, plb.Parts(inner).StartPoint) And CoIncident(plb.Parts(outer).EndPoint, plb.Parts(inner).EndPoint)) Or (CoIncident(plb.Parts(outer).StartPoint, plb.Parts(inner).EndPoint) And CoIncident(plb.Parts(outer).EndPoint, plb.Parts(inner).StartPoint))) AndAlso
+                        plb.Parts(outer).Points.Count = plb.Parts(inner).Points.Count Then
+                                plb.Parts(outer).Clear()
+                                plb.Parts(inner).Clear()
+                                Exit For
+                            End If
                         End If
                     End If
-                End If
-            Catch ex As Exception
-                MessageBox.Show($"Part {outer} {ex.Message}{vbCrLf}{ex.StackTrace}")
-            End Try
+                Next
+            End If
         Next
-    End Function
+        ' remove deleted edges
+        Dim RemovedEdges = 0
+        For ndx = plb.Parts.Count - 1 To 0 Step -1
+            If plb.Parts(ndx).IsEmpty Then
+                plb.Parts.RemoveAt(ndx)
+                RemovedEdges += 1
+            End If
+        Next
+        AppendText(TextBox1, $"Dissolve: {RemovedEdges} internal edges removed{vbCrLf}")
+        If plb.Parts.Count = 0 Then
+            plb = original        ' restore original
+            MsgBox("Polygon empty", vbCritical + vbOKOnly, "Polygon empty")
+        End If
+    End Sub
     Shared Function CoIncident(a As MapPoint, b As MapPoint) As Boolean
         ' test if points are coincident with small tolerance
         Const tol = 0.000001
@@ -1246,7 +1140,7 @@ skip:
                 Else
                     AppendText(TextBox1, $"Extracted data for {entity}{vbCrLf}")
                     Dim geometry As Polygon = feature(0).Geometry
-                    Dim poly = Generalize(geometry)                   ' convert to JSON
+                    Dim poly = GeneralizeByPart(geometry)                   ' convert to JSON
                     sql.CommandText = $"UPDATE DXCC SET geometry='{poly.ToJson}' WHERE Entity='{SQLescape(entity)}'"   ' update database
                     sql.ExecuteNonQuery()
                 End If
@@ -1283,7 +1177,12 @@ skip:
             Dim polyPartGeneralized As Polygon = GeometryEngine.Generalize(PolyPart, GeneralizeAngle, False)   ' Generalize a polygon to reduce it in size
             For Each p In polyPartGeneralized.Parts
                 plb.AddPart(p)      ' add parts (there should only be one) of the generalized polygon
+
             Next
+        Next
+        ' Close all polygons
+        For ndx = 0 To plb.Parts.Count - 1
+            If Not CoIncident(plb.Parts(ndx).StartPoint, plb.Parts(ndx).EndPoint) Then plb.Parts(ndx).AddPoint(plb.Parts(ndx).StartPoint)
         Next
         Dim polyGeneralized As New Polygon(plb.Parts)
         If polyGeneralized.IsEmpty Then polyGeneralized = poly       ' If the polygon is generalized to nothing, the original polygon is returned
@@ -1407,6 +1306,10 @@ skip:
 
     Private Sub AdjacentColorCheckToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles AdjacentColorCheckToolStripMenuItem.Click
         AdjacentColourCheck
+    End Sub
+
+    Private Async Sub ImportAntarcticaToolStripMenuItem_Click_1(sender As Object, e As EventArgs) Handles ImportAntarcticaToolStripMenuItem.Click
+        Await ImportAntarctica()
     End Sub
 End Class
 

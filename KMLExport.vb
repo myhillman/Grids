@@ -171,7 +171,7 @@ Module KMLExport
         kml.WriteLine("<name>Grid Squares</name>")
         kml.WriteLine("<description>Gridsquare overlay</description>")
         kml.WriteLine("<visibility>0</visibility>")
-        kml.WriteLine("<Style id=""grid""><LabelStyle><color>ff000000</color><scale>2</scale></LabelStyle><IconStyle><Icon></Icon></IconStyle><PolyStyle><color>3fffffff</color><fill>0</fill><outline>1</outline></PolyStyle><LineStyle><color>ff000000</color><width>2</width></LineStyle></Style>")
+        kml.WriteLine("<Style id=""grid""><LabelStyle><color>9Fffff00</color><scale>2</scale></LabelStyle><IconStyle><Icon></Icon></IconStyle><PolyStyle><color>9Fffff00</color><fill>0</fill><outline>1</outline></PolyStyle><LineStyle><color>9Fffff00</color><width>2</width></LineStyle></Style>")
 
         sql = connect.CreateCommand
         For Each DXCC In DXCClist
