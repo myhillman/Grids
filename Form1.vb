@@ -406,7 +406,7 @@ There are some additional folders which are closed by default. You must open the
                     Dim httpResult As System.Net.Http.HttpResponseMessage = Await httpClient.PostAsync(url, body)
                     httpResult.EnsureSuccessStatusCode()
                     responseString = Await httpResult.Content.ReadAsStringAsync()
-                    AppendText(TextBox1, $"{responseString.Length} bytes retrieved {OSMTimer.ElapsedMilliseconds / 1000:f1}s{vbCrLf}")
+                    AppendText(TextBox1, $"{responseString.Length} bytes retrieved [{OSMTimer.ElapsedMilliseconds / 1000:f1}s]{vbCrLf}")
                 Catch ex As HttpRequestException
                     MsgBox($"{ex.Message}{vbCrLf}query={query}", vbCritical + vbOKOnly, "OSM request error")
                 End Try
@@ -420,7 +420,6 @@ There are some additional folders which are closed by default. You must open the
             End If
 
             Dim plb As New PolylineBuilder(SpatialReferences.Wgs84)
-            Dim refList As New List(Of Integer)         ' list of way references already processed. Need to skip duplicates
             For Each element In elements.AsArray
                 Dim ElementType = element!type.ToString
                 Select Case ElementType
@@ -430,11 +429,11 @@ There are some additional folders which are closed by default. You must open the
                         For Each member As JsonNode In members
                             Dim ty As String = member!type
                             If ty = "way" Then      ' a linestring
-                                ProcessWay(member, plb, refList)
+                                ProcessWay(member, plb)
                             End If
                         Next
                     Case "way"
-                        ProcessWay(element, plb, refList)
+                        ProcessWay(element, plb)
                 End Select
             Next
 
@@ -449,27 +448,14 @@ There are some additional folders which are closed by default. You must open the
         Return 1
     End Function
 
-    Sub ProcessWay(json As JsonNode, ByRef plb As PolylineBuilder, refList As List(Of Integer))
+    Sub ProcessWay(json As JsonNode, ByRef plb As PolylineBuilder)
         ' Process an individual way
-        Dim ref As Integer
-        If json!ref IsNot Nothing Then
-            ref = json!ref
-        Else
-            If json!id IsNot Nothing Then
-                ref = json!id
-            Else
-                MsgBox("way does not have ref or id", vbCritical + vbOKOnly, "Missing ref/id")
-            End If
-        End If
-        If Not refList.Contains(ref) Then       ' don't process twice
-            refList.Add(ref)
-            Dim way = New Part(plb.SpatialReference)
-            For Each pnt In json!geometry.AsArray
-                If pnt IsNot Nothing Then way.AddPoint(CDbl(pnt("lon")), CDbl(pnt("lat")))
-            Next
-            If Not way.IsEmpty And way.Points.Count > 0 Then
-                plb.AddPart(way)
-            End If
+        Dim way = New Part(plb.SpatialReference)
+        For Each pnt In json!geometry.AsArray
+            If pnt IsNot Nothing Then way.AddPoint(CDbl(pnt("lon")), CDbl(pnt("lat")))
+        Next
+        If Not way.IsEmpty And way.Points.Count > 0 Then
+            plb.AddPart(way)
         End If
     End Sub
     Function ParseBox(bbox As String) As Geometry
@@ -535,12 +521,6 @@ There are some additional folders which are closed by default. You must open the
         '    Next
         'End Using
         Debug.Assert(plb.Parts.Any, "Geometry is empty")
-        ' Measure size of starting data
-        Dim beforeParts = plb.Parts.Count
-        Dim beforePoints = 0
-        For Each prt In plb.Parts
-            beforePoints += prt.PointCount
-        Next
 
         Dissolve(plb) ' Delete internal, shared ways.
 
@@ -635,8 +615,7 @@ There are some additional folders which are closed by default. You must open the
                 Next
                 AppendText(TextBox1, $" ")
             End If
-            AppendText(TextBox1, $"closed {closed} ")
-            AppendText(TextBox1, $"{PassWatch.ElapsedMilliseconds / 1000:f1}s{vbCrLf}")
+            AppendText(TextBox1, $"closed {closed} [{PassWatch.ElapsedMilliseconds / 1000:f1}s]{vbCrLf}")
             pass += 1
             If RemovedCount = 0 Then finished = True
         End While
@@ -695,12 +674,6 @@ There are some additional folders which are closed by default. You must open the
             poly = New Polygon(original.Parts)
         End If
         Dim polyGeneralized As Polygon = GeneralizeByPart(poly)
-        Dim afterParts = polyGeneralized.Parts.Count
-        Dim afterPoints = 0
-        For Each p In polyGeneralized.Parts
-            afterPoints += p.PointCount
-        Next
-        AppendText(TextBox1, $"Polyline converted to polygon. Before parts={beforeParts} points={beforePoints}, After parts={afterParts} points={afterPoints}. Reduced to {afterPoints / beforePoints * 100:f1}%{vbCrLf}")
         Return polyGeneralized
     End Function
     Function Connectivity(plb As PolylineBuilder)
@@ -753,6 +726,9 @@ There are some additional folders which are closed by default. You must open the
 
     Public Sub Dissolve(ByRef plb As PolylineBuilder)
         ' Remove internal boundaries. Boundary is internal if start and end point match, and ways have same number of points
+        Dim timer As New Stopwatch()
+        timer.Start()
+
         With ProgressBar1
             .Minimum = 0
             .Maximum = plb.Parts.Count - 1
@@ -766,7 +742,7 @@ There are some additional folders which are closed by default. You must open the
                     If Not plb.Parts(inner).IsEmpty Then
                         If Not (plb.Parts(inner).IsEmpty Or plb.Parts(outer).Points.Count = 0) Then
                             If ((CoIncident(plb.Parts(outer).StartPoint, plb.Parts(inner).StartPoint) And CoIncident(plb.Parts(outer).EndPoint, plb.Parts(inner).EndPoint)) Or (CoIncident(plb.Parts(outer).StartPoint, plb.Parts(inner).EndPoint) And CoIncident(plb.Parts(outer).EndPoint, plb.Parts(inner).StartPoint))) AndAlso
-                        plb.Parts(outer).Points.Count = plb.Parts(inner).Points.Count Then
+                            plb.Parts(outer).Points.Count = plb.Parts(inner).Points.Count Then
                                 plb.Parts(outer).Clear()
                                 plb.Parts(inner).Clear()
                                 Exit For
@@ -784,7 +760,8 @@ There are some additional folders which are closed by default. You must open the
                 RemovedEdges += 1
             End If
         Next
-        AppendText(TextBox1, $"Dissolve: {RemovedEdges} internal edges removed{vbCrLf}")
+        timer.Stop()
+        AppendText(TextBox1, $"Dissolve: {RemovedEdges} internal edges removed. [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")
         If plb.Parts.Count = 0 Then
             plb = original        ' restore original
             MsgBox("Polygon empty", vbCritical + vbOKOnly, "Polygon empty")
@@ -1159,15 +1136,19 @@ There are some additional folders which are closed by default. You must open the
         Return polyGeneralized
     End Function
 
-    Shared Function GeneralizeByPart(poly As Polygon) As Polygon
+    Function GeneralizeByPart(poly As Polygon) As Polygon
         ' Generalizing a Polygon as a single entity often ends up with degenerate or mangled polygons.
         ' This function generalizes by individual parts. It will use a different generalize distance depending on the size of the part.
         ' Large parts will be generalized to CLOSENESS meters.
         ' Small parts will be generalized to 1% of the extent, where 1% of the extent is less than CLOSENESS
         Dim plb As New PolylineBuilder(SpatialReferences.Wgs84)     ' create a polyline builder to collect generalized parts
-        Dim distance As GeodeticDistanceResult
+        Dim distance As GeodeticDistanceResult, timer As New Stopwatch
+        Dim BeforePoints As Integer = 0, AfterPoints As Integer = 0, BeforeParts As Integer, AfterParts As Integer
 
+        timer.Start()
+        BeforeParts = poly.Parts.Count
         For Each prt In poly.Parts
+            BeforePoints += prt.PointCount
             Dim PolyPart = New Polygon(prt)         ' create a new polygon from the part
             With PolyPart.Extent
                 distance = GeometryEngine.DistanceGeodetic(New MapPoint(.XMin, .YMin, poly.SpatialReference), New MapPoint(.XMax, .YMax, poly.SpatialReference), LinearUnits.Meters, AngularUnits.Degrees, GeodeticCurveType.Geodesic)  ' calculate diagonal distance of the extent
@@ -1177,15 +1158,18 @@ There are some additional folders which are closed by default. You must open the
             Dim polyPartGeneralized As Polygon = GeometryEngine.Generalize(PolyPart, GeneralizeAngle, False)   ' Generalize a polygon to reduce it in size
             For Each p In polyPartGeneralized.Parts
                 plb.AddPart(p)      ' add parts (there should only be one) of the generalized polygon
-
             Next
         Next
         ' Close all polygons
         For ndx = 0 To plb.Parts.Count - 1
             If Not CoIncident(plb.Parts(ndx).StartPoint, plb.Parts(ndx).EndPoint) Then plb.Parts(ndx).AddPoint(plb.Parts(ndx).StartPoint)
+            AfterPoints += plb.Parts(ndx).PointCount
         Next
         Dim polyGeneralized As New Polygon(plb.Parts)
         If polyGeneralized.IsEmpty Then polyGeneralized = poly       ' If the polygon is generalized to nothing, the original polygon is returned
+        AfterParts = polyGeneralized.Parts.Count
+        timer.Stop()
+        AppendText(TextBox1, $"GeneralizeByPart: before parts {BeforeParts} points {BeforePoints}, after parts {AfterParts} points {AfterPoints}, reduced to {AfterPoints / BeforePoints * 100:f1}% [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")
         Return polyGeneralized
     End Function
 

@@ -120,7 +120,10 @@ Module KMLExport
     End Function
     Sub PrefixFolder(kml As StreamWriter)
         ' Create the Prefix folder
-        Form1.AppendText(Form1.TextBox1, $"Making KML for {prefixes.Count} prefixes{vbCrLf}")
+        Dim timer As New Stopwatch
+
+        timer.Start()
+        Form1.AppendText(Form1.TextBox1, $"Making KML for {prefixes.Count} prefixes.")
         kml.WriteLine("<Folder>")
         kml.WriteLine("<name>Prefixes</name>")
         kml.WriteLine("<description>A folder containing all prefix labels</description>")
@@ -132,6 +135,7 @@ Module KMLExport
             kml.WriteLine("</Point></Placemark>")
         Next
         kml.WriteLine("</Folder>")
+        Form1.AppendText(Form1.TextBox1, $" [{Timer.Elapsed.Seconds:f1}s]{vbCrLf}")
     End Sub
     Sub BoundingBoxFolder(kml As StreamWriter, BoundingBoxes As List(Of (name As String, box As String)))
         ' Create the Bounding Box folder
@@ -164,9 +168,11 @@ Module KMLExport
     End Sub
     Sub GridSquareFolder(connect As SqliteConnection, kml As StreamWriter, DXCClist As List(Of Integer))
         ' Create the Grid Square folder
-        Dim sql As SqliteCommand, SQLdr As SqliteDataReader
+        Dim sql As SqliteCommand, SQLdr As SqliteDataReader, timer As New Stopwatch
 
-        Form1.AppendText(Form1.TextBox1, $"Making KML for Grid Square folder{vbCrLf}")
+        timer.Start()
+        Form1.AppendText(Form1.TextBox1, $"Making KML for Grid Square folder ")
+        Application.DoEvents()
         kml.WriteLine("<Folder>")
         kml.WriteLine("<name>Grid Squares</name>")
         kml.WriteLine("<description>Gridsquare overlay</description>")
@@ -227,13 +233,17 @@ Module KMLExport
             kml.WriteLine("</Folder>")
         Next
         kml.WriteLine("</Folder>")
+        timer.Stop()
+        Form1.AppendText(Form1.TextBox1, $" [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")
     End Sub
 
     Public Sub ZoneFolder(connect As SqliteConnection, kml As StreamWriter)
         ' make a folder for CQ & ITU Zones. Use data created by Francesco Crosilla IV3TMM (SK)
-        Dim sql As SqliteCommand
+        Dim sql As SqliteCommand, timer As New Stopwatch
 
-        Form1.AppendText(Form1.TextBox1, $"Making KML for CQ/ITU folders{vbCrLf}")
+        timer.Start()
+        Form1.AppendText(Form1.TextBox1, "Making KML for CQ/ITU folders.")
+        Application.DoEvents()
         sql = connect.CreateCommand
         kml.WriteLine("<Folder><name>CQ Zones</name><visibility>0</visibility>")
         kml.WriteLine("<description>Lines describing CQ Zones. Based on data created by Francesco Crosilla IV3TMM (SK).</description>")
@@ -247,7 +257,10 @@ Module KMLExport
         kml.WriteLine("<Style id=""ITU""><LabelStyle><color>ffff02fc</color><scale>6</scale></LabelStyle><IconStyle><Icon></Icon></IconStyle><LineStyle><color>ffff02fc</color><width>5</width></LineStyle></Style>")
         CreateZoneKML(connect, kml, "ITU")
         kml.WriteLine("</Folder>")
+        timer.Stop()
+        Form1.AppendText(Form1.TextBox1, $" [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")
     End Sub
+
     Sub CreateZoneKML(connect As SqliteConnection, kml As StreamWriter, zone As String)
         ' Create linestrings and lables for CQ or ITU zones
         Dim sql As SqliteCommand, SQLdr As SqliteDataReader
@@ -283,9 +296,11 @@ Module KMLExport
     End Sub
     Public Sub TimeZoneFolder(connect As SqliteConnection, kml As StreamWriter)
         ' make a folder for Timezones. 
-        Dim sql As SqliteCommand, SQLdr As SqliteDataReader
+        Dim sql As SqliteCommand, SQLdr As SqliteDataReader, timer As New Stopwatch
 
-        Form1.AppendText(Form1.TextBox1, $"Making KML for Timezone folder{vbCrLf}")
+        timer.Start()
+        Form1.AppendText(Form1.TextBox1, $"Making KML for Timezone folder.")
+        Application.DoEvents()
         sql = connect.CreateCommand
         kml.WriteLine("<Folder><name>Timezones</name><visibility>0</visibility><open>0</open>")
         kml.WriteLine("<description>Polygons describing timezones. Data obtained from https://www.naturalearthdata.com/</description>")
@@ -323,12 +338,15 @@ Module KMLExport
             kml.WriteLine("</Placemark>")
         Next
         kml.WriteLine("</Folder>")
+        Form1.AppendText(Form1.TextBox1, $" [{Timer.Elapsed.Seconds:f1}s]{vbCrLf}")
     End Sub
 
     Sub IARUFolder(connect As SqliteConnection, kml As StreamWriter)
         ' make the IARU regions folder
-        Dim sql As SqliteCommand, SQLdr As SqliteDataReader
+        Dim sql As SqliteCommand, SQLdr As SqliteDataReader, timer As New Stopwatch
 
+        timer.Start()
+        Form1.AppendText(Form1.TextBox1, "Making IARU folder.")
         kml.WriteLine("<Folder><name>IARU regions</name><visibility>0</visibility><open>0</open>")
         kml.WriteLine("<Style id=""IARU""><LineStyle><color>ffffffff</color><width>3</width></LineStyle><LabelStyle><color>ffffffff</color><scale>15</scale></LabelStyle><IconStyle><Icon></Icon></IconStyle></Style>")
         kml.WriteLine("<description>Lines defining IARU boundaries. Data provided by Tim Makins (EI8IC)/</description>")
@@ -358,11 +376,15 @@ Module KMLExport
         Next
         kml.WriteLine("</Folder>")
         kml.WriteLine("</Folder>")
+        Form1.AppendText(Form1.TextBox1, $" [{Timer.Elapsed.Seconds:f1}s]{vbCrLf}")
     End Sub
     Sub AntarcticFolder(connect As SqliteConnection, kml As StreamWriter)
         ' Create the Antarctic bases folder
-        Dim sql As SqliteCommand, SQLdr As SqliteDataReader
+        Dim sql As SqliteCommand, SQLdr As SqliteDataReader, timer As New Stopwatch
 
+        timer.Start()
+        Form1.AppendText(Form1.TextBox1, "Making Antarctic bases folder.")
+        Application.DoEvents()
         kml.WriteLine("<Folder>")
         kml.WriteLine("<name>Antarctic bases</name>")
         kml.WriteLine("<description>Details of all active Antartic bases. Data harvested from https://www.coolantarctica.com/Community/antarctic_bases.php</description>")
@@ -388,6 +410,7 @@ Module KMLExport
             kml.WriteLine($"</Placemark>")
         End While
         kml.WriteLine("</Folder>")
+        Form1.AppendText(Form1.TextBox1, $" [{Timer.Elapsed.Seconds:f1}s]{vbCrLf}")
     End Sub
     Sub EUASborder(kml As StreamWriter)
         ' add the EU/AS Russia border
