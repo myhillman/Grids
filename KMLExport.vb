@@ -140,8 +140,10 @@ Module KMLExport
     Sub BoundingBoxFolder(kml As StreamWriter, BoundingBoxes As List(Of (name As String, box As String)))
         ' Create the Bounding Box folder
         Const DensifyDegrees = 5        ' ensure lines have resolution so the follow lat/lon lines
+        Dim timer As New Stopwatch
 
-        Form1.AppendText(Form1.TextBox1, $"Making KML for {BoundingBoxes.Count} bounding boxes{vbCrLf}")
+        timer.Start()
+        Form1.AppendText(Form1.TextBox1, $"Making KML for {BoundingBoxes.Count} bounding boxes.")
         kml.WriteLine("<Folder>")
         kml.WriteLine("<name>Bounding Boxes</name>")
         kml.WriteLine("<description>Bounding boxes sometimes necessary to filter query. For debugging only.</description>")
@@ -165,6 +167,8 @@ Module KMLExport
             kml.WriteLine($"</Placemark>")
         Next
         kml.WriteLine("</Folder>")
+        timer.Stop()
+        Form1.AppendText(Form1.TextBox1, $" [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")
     End Sub
     Sub GridSquareFolder(connect As SqliteConnection, kml As StreamWriter, DXCClist As List(Of Integer))
         ' Create the Grid Square folder

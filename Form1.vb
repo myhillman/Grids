@@ -346,7 +346,8 @@ There are some additional folders which are closed by default. You must open the
     Public Async Function CreateGrids(connect As SqliteConnection, country As String) As Task(Of Integer)
 
         Dim sql As SqliteCommand, SQLdr As SqliteDataReader, sqlupd As SqliteCommand
-        Dim responseString As String = "", geometry As String, dxcc As Integer, query As String
+        Dim responseString As String = "", geometry As String, dxcc As Integer, query As String, timer As New Stopwatch
+        Dim pb As Multipoint = Nothing
 
         AppendText(TextBox1, $"Creating grids for {country}{vbCrLf}")
 
@@ -378,25 +379,18 @@ There are some additional folders which are closed by default. You must open the
                     Exit Function
                 End If
                 ' the name is sometimes not sufficient to specify the target of the query, e.g. "Christmas Island" which is not unique
-                ' we can specify a bounding box in this case
+                ' We can specify a bounding box in this case
+                ' If a bounding box is rectangular, it can be applied as part of the query.
+                ' If polygon, it can only be applied to returned data
 
-                'Dim query = $"[out:json][timeout:100];
-                '    {criteria};
-                '(
-                '    way(r)[maritime != yes];
-                '    way(area)[natural=coastline];
-                ');
-                'out geom;"
                 Dim bbox As String = ""
                 If Not IsDBNull(SQLdr("bbox")) AndAlso SQLdr("bbox") <> "" Then
-                    ' validate bounding box and add to query
-                    Dim box = Split(SQLdr("bbox"), ",")
-                    Debug.Assert(box.Length = 4, "Bounding box must contain 4 values")
-                    Debug.Assert(CDbl(box(0)) < CDbl(box(2)), "Bottom value must be less than top")
-                    ' Need to check left and right, but there could be a situation (e.g. Fiji) where the bounding box crosses the Antimeridian
-                    Debug.Assert(CDbl(box(1)) < CDbl(box(3)) Or (CDbl(box(1)) > 0 And CDbl(box(3)) < 0 And Math.Abs(CDbl(box(1)) + CDbl(box(3))) < 10), "Left value must be less than right")
-                    bbox = $"({SQLdr("bbox")})"
-                    Dim bounds = ParseBox(SQLdr("bbox"))
+                    pb = ParseBox(SQLdr("bbox"), SQLdr("entity") = "Fiji")
+                    If pb IsNot Nothing Then
+                        If pb.Points.Count = 5 AndAlso pb.Points(0).Distance(pb.Points(3)) = pb.Points(1).Distance(pb.Points(4)) Then   ' 4 sided object is rectangular if diagonals are equal
+                            bbox = $"({SQLdr("bbox")})"
+                        End If
+                    End If
                 End If
                 query = $"[out:json][timeout:100];
                         {criteria};
@@ -412,6 +406,7 @@ There are some additional folders which are closed by default. You must open the
                 End Try
             End Using
 
+            timer.Start()
             Dim response = JsonNode.Parse(responseString)
             Dim elements As JsonNode = response!elements        ' root node for ways and relations
             If elements.AsArray.Count = 0 Then
@@ -436,15 +431,27 @@ There are some additional folders which are closed by default. You must open the
                         ProcessWay(element, plb)
                 End Select
             Next
+            timer.Stop()
+            AppendText(TextBox1, $"Ingest: {plb.Parts.Count} ways retrieved. [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")
 
             'Connectivity(plb)
             Dim poly As Polygon = CreatePolygon(plb, country)
+
+            ' Now apply polygon bounding box (if any)
+            If pb IsNot Nothing Then
+                If Not (pb.Points.Count = 5 AndAlso pb.Points(0).Distance(pb.Points(2)) = pb.Points(1).Distance(pb.Points(3))) Then   ' 4 sided object is rectangular if diagonals are equal
+                    Dim pbPoly As Polygon = New Polygon(pb.Points)
+                    poly = poly.Intersection(pbPoly)
+                End If
+            End If
+
             geometry = poly.ToJson           ' convert to json
             SQLdr.Close()
             sql.CommandText = $"UPDATE `DXCC` SET `geometry`='{geometry}' WHERE `DXCCnum`={dxcc}"
             sql.ExecuteNonQuery()         ' insert into database
         End If
         If Not SQLdr.IsClosed Then SQLdr.Close()
+
         Return 1
     End Function
 
@@ -458,34 +465,52 @@ There are some additional folders which are closed by default. You must open the
             plb.AddPart(way)
         End If
     End Sub
-    Function ParseBox(bbox As String) As Geometry
+    Function ParseBox(bbox As String, antimeridian As Boolean) As Geometry
         ' Convert a Bounding Box specification to a multipoint
         ' It may be a bbox of form "a,b,c,d",  or a polygon of form "poly:a b c d e f g h i j"
         Dim mpb As New MultipointBuilder(SpatialReferences.Wgs84), result As Multipoint = Nothing
+
         If IsDBNullorEmpty(bbox) Then Return result        ' no bounds
         Dim groups = bbox.Split(",")
-        If groups.Count = 4 Then
+        If groups.Count = 4 Then        ' could be a box
+            If Not antimeridian Then
+                If (CDbl(groups(0)) > CDbl(groups(2)) Or CDbl(groups(1)) > CDbl(groups(3))) Then
+                    MsgBox($"Bounding box {bbox} is malformed", vbCritical + vbOKOnly, "Bad bounding box")
+                    Return result
+                End If
+            End If
+            If Not (Between(CDbl(groups(0)), -90, 90) And Between(CDbl(groups(1)), -180, 180) And Between(CDbl(groups(2)), -90, 90) And Between(CDbl(groups(3)), -180, 180)) Then
+                MsgBox($"Bad lat/lon in bounding box {bbox}", vbCritical + vbOKOnly, "Bad coordinate")
+            End If
             mpb.Points.Add(New MapPoint(CDbl(groups(1)), CDbl(groups(0))))
-            mpb.Points.Add(New MapPoint(CDbl(groups(1)), CDbl(groups(2))))
-            mpb.Points.Add(New MapPoint(CDbl(groups(3)), CDbl(groups(2))))
-            mpb.Points.Add(New MapPoint(CDbl(groups(3)), CDbl(groups(0))))
-            mpb.Points.Add(New MapPoint(CDbl(groups(1)), CDbl(groups(0))))
-            result = mpb.ToGeometry
-        Else
-            Dim matches = Regex.Match(bbox, "^poly:""([\d\.\- ]+)""$")
-            If matches.success Then
+                mpb.Points.Add(New MapPoint(CDbl(groups(1)), CDbl(groups(2))))
+                mpb.Points.Add(New MapPoint(CDbl(groups(3)), CDbl(groups(2))))
+                mpb.Points.Add(New MapPoint(CDbl(groups(3)), CDbl(groups(0))))
+                mpb.Points.Add(New MapPoint(CDbl(groups(1)), CDbl(groups(0))))
+                result = mpb.ToGeometry
+            Else        ' might be a polygon
+                Dim matches = Regex.Match(bbox, "^poly:""([\d\.\- ]+)""$")
+            If matches.Success Then
                 Dim data = Split(matches.Groups(1).Value, " ")      ' split space separated list of coordinates
                 Dim X As Double, Y As Double
                 Debug.Assert(data.Count Mod 2 = 0, "Odd number of coordinates")
                 For i = 0 To data.Count - 1 Step 2
                     Debug.Assert(Double.TryParse(data(i), Y), "Badly formed double")
                     Debug.Assert(Double.TryParse(data(i + 1), X), "Badly formed double")
+                    If Not (Between(X, -180, 180) And Between(Y, -90, 90)) Then
+                        MsgBox($"Bad coordinate lon={X},lat={Y}", vbCritical + vbOKOnly, "Bad coordinate")
+                    End If
                     mpb.Points.Add(New MapPoint(CDbl(X), CDbl(Y)))         ' add xy pair
                 Next
                 result = mpb.ToGeometry
             End If
         End If
         Return result
+    End Function
+    Function Between(value As Double, low As Double, high As Double) As Boolean
+        ' test if value is between low and high limit
+        Debug.Assert(low <= high, "Low value must be less than high value")
+        Return value >= low And value <= high
     End Function
     Function CreatePolygon(plb As PolylineBuilder, country As String) As Polygon
         ' Convert a polyline into a polygon
@@ -507,6 +532,9 @@ There are some additional folders which are closed by default. You must open the
         Dim closed As Integer        ' number of ways closed
         Dim RemovedCount As Integer
         Dim original As New PolylineBuilder(plb.ToGeometry)        ' save if needed
+
+        Debug.Assert(Not (plb.IsEmpty Or plb.Parts.Count = 0), $"Empty PolyLineBuilder")
+        Debug.Assert(String.IsNullOrEmpty(country), "Bad country")
 
         ' dump out ways fro debug purposes
         'Using dump As New StreamWriter("PLB dump.txt", False)
@@ -634,8 +662,8 @@ There are some additional folders which are closed by default. You must open the
         poly = poly.Simplify    ' make sure all polygons have correct winding direction
 
         ' We frequently see a situation where we have an outer ring inside another outer ring. The outer ring is usually the administrative boundary
-        ' whilst the inner ring is the land boundary. In this case we remove the outer ring.
-        Dim OuterRemoval As New List(Of String) From {"Austral Is", "Aves Is", "Martinique", "Bonaire", "Christmas Is", "Clipperton Is", "Lakshadweep Is", "Sable Is", "Scarborough Reef", "St Paul Is", "St. Pierre & Miquelon", "Taiwan", "Marquesas Is", "Wake Is", "Willis Is"}     ' countires which need outer ring removed
+        ' whilst the inner ring is the land boundary. In this case we remove the inner ring.
+        Dim OuterRemoval As New List(Of String) From {"Austral Is", "Aves Is", "Martinique", "Bonaire", "Christmas Is", "Clipperton Is", "Lakshadweep Is", "Sable Is", "Scarborough Reef", "South Georgia Is", "St Paul Is", "St. Pierre & Miquelon", "Taiwan", "Marquesas Is", "Wake Is", "Willis Is"}     ' countires which need outer ring removed
         If OuterRemoval.Contains(country) Then
             '**********************************************
             ' Make a separate polygon for every part so we can use spatial comparisons
@@ -648,24 +676,34 @@ There are some additional folders which are closed by default. You must open the
                 If PolygonArea(poly1.Parts(0)) < 0 Then wind = Winding.Outer Else wind = Winding.Inner
                 polygons.Add((poly1, wind))
             Next
-            Dim OutersRemoved As Integer = 0
-            ' For each inner, delete the corresponding outer
-            For outer = 0 To plb.Parts.Count - 1
-                If polygons(outer).winding = Winding.Inner Then        ' it's an inner ring - look for enclosing ring
-                    For inner = 0 To plb.Parts.Count - 1
-                        If outer <> inner Then
-                            If GeometryEngine.Contains(polygons(inner).poly, polygons(outer).poly) Then
-                                plb.Parts(outer).Clear()        ' remove inner
-                                OutersRemoved += 1
-                            End If
-                        End If
-                    Next
+            Dim InnersRemoved As Integer = 0
+            ' For each outer, delete the corresponding inner
+            'For LoopA = 0 To plb.Parts.Count - 1
+            '    If Not plb.Parts(LoopA).IsEmpty Then
+            '        If polygons(LoopA).winding = Winding.Inner Then        ' it's an inner ring - look for outer ring
+            '            For LoopB = 0 To plb.Parts.Count - 1
+            '                If LoopA <> LoopB Then
+            '                    If Not plb.Parts(LoopB).IsEmpty Then
+            '                        If GeometryEngine.Contains(polygons(LoopB).poly, polygons(LoopA).poly) Then
+            '                            plb.Parts(LoopA).Clear()        ' remove inner
+            '                            InnersRemoved += 1
+            '                        End If
+            '                    End If
+            '                End If
+            '            Next
+            '        End If
+            '    End If
+            'Next
+            For loopA = plb.Parts.Count - 1 To 0 Step -1
+                If polygons(loopA).winding = Winding.Inner Then
+                    plb.Parts.RemoveAt(loopA)
+                    InnersRemoved += 1
                 End If
             Next
-            If OutersRemoved > 0 Then
+            If InnersRemoved > 0 Then
                 poly = New Polygon(plb.Parts)           ' put polygon back together
-                'poly = poly.Simplify    ' make sure all polygons have correct winding direction
-                AppendText(TextBox1, $"{OutersRemoved} outer boundaries removed{vbCrLf}")
+                poly = poly.Simplify    ' make sure all polygons have correct winding direction
+                AppendText(TextBox1, $"{InnersRemoved} inner boundaries removed{vbCrLf}")
             End If
         End If
 
@@ -680,6 +718,7 @@ There are some additional folders which are closed by default. You must open the
         ' Do any ways intersect ?
         Dim joins As New List(Of List(Of String)), SelfClosed As Integer = 0
 
+        Debug.Assert(Not (plb.IsEmpty Or plb.Parts.Count = 0), $"Empty PolyLineBuilder")
         With ProgressBar1
             .Minimum = 0
             .Maximum = plb.Parts.Count - 1
@@ -727,8 +766,9 @@ There are some additional folders which are closed by default. You must open the
     Public Sub Dissolve(ByRef plb As PolylineBuilder)
         ' Remove internal boundaries. Boundary is internal if start and end point match, and ways have same number of points
         Dim timer As New Stopwatch()
-        timer.Start()
 
+        Debug.Assert(Not (plb.IsEmpty Or plb.Parts.Count = 0), $"Empty PolyLineBuilder")
+        timer.Start()
         With ProgressBar1
             .Minimum = 0
             .Maximum = plb.Parts.Count - 1
@@ -821,7 +861,8 @@ There are some additional folders which are closed by default. You must open the
                 DXCClist.Add(SQLdr("DXCCnum"))
                 Dim BoundingBox = SQLdr("bbox")
                 If Not IsDBNullorEmpty(BoundingBox) Then
-                    BoundingBoxes.Add((name:=SQLdr("Entity"), box:=ParseBox(BoundingBox).ToJson))
+                    Dim antimeridian As Boolean = SQLdr("entity") = "Fiji"      ' does this bbox cross the antimeridian?
+                    BoundingBoxes.Add((name:=SQLdr("Entity"), box:=ParseBox(BoundingBox, antimeridian).ToJson))
                 End If
             End While
             SQLdr.Close()
@@ -1047,11 +1088,11 @@ There are some additional folders which are closed by default. You must open the
     End Sub
 
     Private Sub CheckISO3166ReferencesToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles CheckISO3166ReferencesToolStripMenuItem.Click
-        Checkiso3166references
+        CheckISO3166References()
     End Sub
 
     Private Sub CountryCollisionsToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles CountryCollisionsToolStripMenuItem.Click
-        CountryCollisions
+        CountryCollisions()
     End Sub
 
     Private Sub RemoveEmptyGeometryToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles RemoveEmptyGeometryToolStripMenuItem.Click
@@ -1126,13 +1167,26 @@ There are some additional folders which are closed by default. You must open the
         AppendText(TextBox1, "Done")
     End Sub
 
-    Shared Function Generalize(poly As Polygon) As Polygon
+    Function Generalize(poly As Polygon) As Polygon
         ' Generalize a polygon. If generalized out of existence then return original polygon
+        Dim BeforeParts As Integer, BeforePoints As Integer = 0, AfterParts As Integer, AfterPoints As Integer = 0, timer As New Stopwatch
+
+        timer.Start()
+        BeforeParts = poly.Parts.Count
+        For Each prt In poly.Parts
+            BeforePoints += prt.PointCount
+        Next
         Dim distance = GeometryEngine.DistanceGeodetic(New MapPoint(poly.Extent.XMin, poly.Extent.YMin, poly.SpatialReference), New MapPoint(poly.Extent.XMax, poly.Extent.YMax, poly.SpatialReference), LinearUnits.Meters, AngularUnits.Degrees, GeodeticCurveType.Geodesic)
         Dim GeneralizeDistance = Math.Min(CLOSENESS, distance.Distance * 0.01)              ' Generalize to 1 percent of envelope size, or CLOSENESS, whichever is less 
         Dim GeneralizeAngle As Double = RadtoDeg(Math.Asin(GeneralizeDistance / EARTH_RADIUS))
         Dim polyGeneralized As Polygon = GeometryEngine.Generalize(poly, GeneralizeAngle, False)   ' Generalize a polygon to reduce it in size
         If polyGeneralized.IsEmpty Then polyGeneralized = poly       ' If the polygon is generalized To nothing, the original polygon is returned
+        AfterParts = polyGeneralized.Parts.Count
+        For Each prt In polyGeneralized.Parts
+            AfterPoints += prt.PointCount
+        Next
+        timer.Stop()
+        AppendText(TextBox1, $"Generalize: before parts {BeforeParts} points {BeforePoints}, after parts {AfterParts} points {AfterPoints}, reduced to {AfterPoints / BeforePoints * 100:f1}% [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")
         Return polyGeneralized
     End Function
 
@@ -1275,7 +1329,7 @@ There are some additional folders which are closed by default. You must open the
     End Sub
 
     Private Sub IOTACheckToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles IOTACheckToolStripMenuItem.Click
-        IOTACheck
+        IOTACheck()
     End Sub
 
     Private Sub ParseBoxToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles ParseBoxToolStripMenuItem.Click
@@ -1283,17 +1337,70 @@ There are some additional folders which are closed by default. You must open the
         Dim testcases As New List(Of (input As String, result As Boolean)) From {{("-15,-171,-14,-167", True)}, {("-53,165,-48,179.9", True)},
             {("-53,165,-48", False)}, {("poly:""-12 -160 -12 -135 -27 -135 -17 -160 -12 -160""", True)}}
         For Each testcase In testcases
-            Dim result = ParseBox(testcase.input) IsNot Nothing
+            Dim result = ParseBox(testcase.input, False) IsNot Nothing
             AppendText(TextBox1, $"test case {testcase.input}, Expected result {testcase.result}, Passed {testcase.result = result}{vbCrLf}")
         Next
     End Sub
 
     Private Sub AdjacentColorCheckToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles AdjacentColorCheckToolStripMenuItem.Click
-        AdjacentColourCheck
+        AdjacentColourCheck()
     End Sub
 
     Private Async Sub ImportAntarcticaToolStripMenuItem_Click_1(sender As Object, e As EventArgs) Handles ImportAntarcticaToolStripMenuItem.Click
         Await ImportAntarctica()
+    End Sub
+
+    Private Sub ImportPolyFromKMLToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles ImportPolyFromKMLToolStripMenuItem.Click
+        ImportPolyFromKML()
+    End Sub
+
+    Private Sub GeometrySizeTableToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles GeometrySizeTableToolStripMenuItem.Click
+        ' Create list of geometry sizes
+        Dim sql As SqliteCommand, SQLdr As SqliteDataReader
+        Dim partcount As Integer, lines As Integer = 0
+        Dim TotalEntity As Integer = 0, TotalParts As Integer = 0, TotalPoints As Integer = 0, TotalQueries As Integer = 0, TotalJSON As Integer = 0
+        Dim TotalUnclosed As Integer = 0, TotalNotes As Integer = 0, TotalBbox As Integer = 0
+        Dim TotalSize As Integer = 0
+
+        Using connect As New SqliteConnection(DXCC_DATA),
+              html As New StreamWriter($"{Application.StartupPath}\Geometry Size.html", False)
+            connect.Open()
+            sql = connect.CreateCommand
+            ' Find total size of geometry
+            sql.CommandText = "select sum(length(geometry)) as TotalSize from DXCC where Deleted=0 and DXCCnum != 999"
+            SQLdr = sql.ExecuteReader
+            SQLdr.Read()
+            TotalSize = SQLdr("TotalSize")
+            SQLdr.Close()
+            ' Find total entries in report
+            sql.CommandText = "select count(*) as Total from DXCC where Deleted=0 and DXCCnum != 999"
+            SQLdr = sql.ExecuteReader
+            SQLdr.Read()
+            With ProgressBar1
+                .Minimum = 0
+                .Maximum = SQLdr("Total")
+                .Value = 0
+            End With
+            SQLdr.Close()
+            sql.CommandText = "select *,LENGTH(geometry) AS size from `DXCC` where `Deleted`=0 and DXCCnum != 999 ORDER BY size DESC"
+            SQLdr = sql.ExecuteReader
+            html.WriteLine("<!DOCTYPE html>")
+            html.WriteLine("<style> table td:nth-child(2), td:nth-child(3), td:nth-child(4),td:nth-child(5),td:nth-child(6) {text-align:right;} .red td{color:red;font-weight: bold;}</style>")
+            html.WriteLine("<table border=1>")
+            html.WriteLine("<tr><th>Entity</th><th>Parts</th><th>Geometry Size</th><th>Percent</th></tr>")
+            While SQLdr.Read
+                ProgressBar1.Value += 1
+                TotalEntity += 1
+                Dim poly As Polygon = Geometry.FromJson(SQLdr("geometry"))
+                partcount = poly.Parts.Count
+                TotalParts += partcount
+                html.WriteLine($"<tr><td>{Strings.Replace(SQLdr("Entity"), " ", "&nbsp;")}</td><td>{partcount:n0}</td><td>{SQLdr("size")}</td><td>{SQLdr("size") / TotalSize * 100:f1}</td></tr>")
+                lines += 1
+            End While
+            html.WriteLine($"<tr><td>{TotalEntity}</td><td>{TotalParts:n0}</td><td>{TotalSize:n0}</td><td></td></tr>")
+            html.WriteLine("</table>")
+            AppendText(TextBox1, $"{lines} lines written To html file{vbCrLf}")
+        End Using
     End Sub
 End Class
 

@@ -45,6 +45,8 @@ Partial Class Form1
         ImportIOTAGroupsToolStripMenuItem = New ToolStripMenuItem()
         ImportIOTAIslandsToolStripMenuItem = New ToolStripMenuItem()
         ImportIOTADXCCMatchesOneIOTAToolStripMenuItem = New ToolStripMenuItem()
+        ImportAntarcticaToolStripMenuItem = New ToolStripMenuItem()
+        ImportPolyFromKMLToolStripMenuItem = New ToolStripMenuItem()
         ChecksToolStripMenuItem = New ToolStripMenuItem()
         CheckISO3166ReferencesToolStripMenuItem = New ToolStripMenuItem()
         CountryCollisionsToolStripMenuItem = New ToolStripMenuItem()
@@ -52,12 +54,13 @@ Partial Class Form1
         IOTACheckToolStripMenuItem = New ToolStripMenuItem()
         InnerRingsToolStripMenuItem = New ToolStripMenuItem()
         AdjacentColorCheckToolStripMenuItem = New ToolStripMenuItem()
+        GeometrySizeTableToolStripMenuItem = New ToolStripMenuItem()
         TestToolStripMenuItem = New ToolStripMenuItem()
         ParseBoxToolStripMenuItem = New ToolStripMenuItem()
         TextBox1 = New TextBox()
         ProgressBar1 = New ProgressBar()
         DummyToolStripMenuItem = New ToolStripMenuItem()
-        ImportAntarcticaToolStripMenuItem = New ToolStripMenuItem()
+        OpenFileDialog1 = New OpenFileDialog()
         MenuStrip1.SuspendLayout()
         SuspendLayout()
         ' 
@@ -133,7 +136,7 @@ Partial Class Form1
         ' 
         ' ImportToolStripMenuItem
         ' 
-        ImportToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {ImportISO3166ToolStripMenuItem, ImportEUASBorderToolStripMenuItem, ImportCQITUZonesToolStripMenuItem, ImportTimezonesToolStripMenuItem, ImportIARURegionsToolStripMenuItem, UseOSMLandPolygonsToolStripMenuItem, ImportAntarcticBasesToolStripMenuItem, ImportIOTAToolStripMenuItem, ImportAntarcticaToolStripMenuItem})
+        ImportToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {ImportISO3166ToolStripMenuItem, ImportEUASBorderToolStripMenuItem, ImportCQITUZonesToolStripMenuItem, ImportTimezonesToolStripMenuItem, ImportIARURegionsToolStripMenuItem, UseOSMLandPolygonsToolStripMenuItem, ImportAntarcticBasesToolStripMenuItem, ImportIOTAToolStripMenuItem, ImportAntarcticaToolStripMenuItem, ImportPolyFromKMLToolStripMenuItem})
         ImportToolStripMenuItem.Name = "ImportToolStripMenuItem"
         ImportToolStripMenuItem.Size = New Size(55, 20)
         ImportToolStripMenuItem.Text = "Import"
@@ -205,9 +208,21 @@ Partial Class Form1
         ImportIOTADXCCMatchesOneIOTAToolStripMenuItem.Size = New Size(269, 22)
         ImportIOTADXCCMatchesOneIOTAToolStripMenuItem.Text = "Import IOTA DXCC matches one IOTA"
         ' 
+        ' ImportAntarcticaToolStripMenuItem
+        ' 
+        ImportAntarcticaToolStripMenuItem.Name = "ImportAntarcticaToolStripMenuItem"
+        ImportAntarcticaToolStripMenuItem.Size = New Size(217, 22)
+        ImportAntarcticaToolStripMenuItem.Text = "Import Antarctica"
+        ' 
+        ' ImportPolyFromKMLToolStripMenuItem
+        ' 
+        ImportPolyFromKMLToolStripMenuItem.Name = "ImportPolyFromKMLToolStripMenuItem"
+        ImportPolyFromKMLToolStripMenuItem.Size = New Size(217, 22)
+        ImportPolyFromKMLToolStripMenuItem.Text = "Import poly from KML"
+        ' 
         ' ChecksToolStripMenuItem
         ' 
-        ChecksToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {CheckISO3166ReferencesToolStripMenuItem, CountryCollisionsToolStripMenuItem, RemoveEmptyGeometryToolStripMenuItem, IOTACheckToolStripMenuItem, InnerRingsToolStripMenuItem, AdjacentColorCheckToolStripMenuItem})
+        ChecksToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {CheckISO3166ReferencesToolStripMenuItem, CountryCollisionsToolStripMenuItem, RemoveEmptyGeometryToolStripMenuItem, IOTACheckToolStripMenuItem, InnerRingsToolStripMenuItem, AdjacentColorCheckToolStripMenuItem, GeometrySizeTableToolStripMenuItem})
         ChecksToolStripMenuItem.Name = "ChecksToolStripMenuItem"
         ChecksToolStripMenuItem.Size = New Size(57, 20)
         ChecksToolStripMenuItem.Text = "Checks"
@@ -248,6 +263,12 @@ Partial Class Form1
         AdjacentColorCheckToolStripMenuItem.Size = New Size(209, 22)
         AdjacentColorCheckToolStripMenuItem.Text = "Adjacent color check"
         ' 
+        ' GeometrySizeTableToolStripMenuItem
+        ' 
+        GeometrySizeTableToolStripMenuItem.Name = "GeometrySizeTableToolStripMenuItem"
+        GeometrySizeTableToolStripMenuItem.Size = New Size(209, 22)
+        GeometrySizeTableToolStripMenuItem.Text = "Geometry size table"
+        ' 
         ' TestToolStripMenuItem
         ' 
         TestToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {ParseBoxToolStripMenuItem})
@@ -282,11 +303,9 @@ Partial Class Form1
         DummyToolStripMenuItem.Name = "DummyToolStripMenuItem"
         DummyToolStripMenuItem.Size = New Size(32, 19)
         ' 
-        ' ImportAntarcticaToolStripMenuItem
+        ' OpenFileDialog1
         ' 
-        ImportAntarcticaToolStripMenuItem.Name = "ImportAntarcticaToolStripMenuItem"
-        ImportAntarcticaToolStripMenuItem.Size = New Size(217, 22)
-        ImportAntarcticaToolStripMenuItem.Text = "Import Antarctica"
+        OpenFileDialog1.FileName = "OpenFileDialog1"
         ' 
         ' Form1
         ' 
@@ -341,5 +360,8 @@ Partial Class Form1
     Friend WithEvents AdjacentColorCheckToolStripMenuItem As ToolStripMenuItem
     Friend WithEvents ChecksToolStripMenuItem As ToolStripMenuItem
     Friend WithEvents ImportAntarcticaToolStripMenuItem As ToolStripMenuItem
+    Friend WithEvents ImportPolyFromKMLToolStripMenuItem As ToolStripMenuItem
+    Friend WithEvents OpenFileDialog1 As OpenFileDialog
+    Friend WithEvents GeometrySizeTableToolStripMenuItem As ToolStripMenuItem
 
 End Class

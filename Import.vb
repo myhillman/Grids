@@ -521,4 +521,37 @@ Module Import
             End Using
         End If
     End Function
+
+    Sub ImportPolyFromKML()
+        ' Import an OSM poly specification from a polygon in a KML file
+        Dim result = "poly:"
+        Dim coordinates As New PolylineBuilder(SpatialReferences.Wgs84), polyPoints As New List(Of String)
+        With Form1.OpenFileDialog1
+            .Filter = "KML file|*.kml"
+            If .ShowDialog() = System.Windows.Forms.DialogResult.OK Then
+                Dim sr = .FileName
+                ' Open KML file as XML
+                Dim doc = XDocument.Load(sr)    ' read the XML
+                Dim ns = doc.Root.Name.Namespace      ' get namespace name so we can qualify everything
+                Dim nsmgr As New XmlNamespaceManager(New NameTable)
+                nsmgr.AddNamespace("x", ns.NamespaceName)
+                Dim polygon = doc.XPathSelectElement("//x:coordinates", nsmgr).Value
+                polygon = Regex.Replace(polygon.Trim, "[^0-9\-\., ]", "")        ' find polygon list of coordinates
+                Dim s = Split(polygon, " ")
+                For Each coord In s
+                    Dim c = Split(coord, ",")
+                    coordinates.AddPoint(CDbl(c(1)), CDbl(c(0)))
+                Next
+                'If Not Form1.CoIncident(coordinates.Parts(0).StartPoint, coordinates.Parts(0).EndPoint) Then coordinates.AddPoint(coordinates.Parts(0).StartPoint)       ' close polygon
+                Dim poly As Polygon = New Polygon(coordinates.Parts)            ' make a polygon out of points
+                poly = poly.Densify(10)        ' make sure there are enough points
+                For Each pnt In poly.Parts(0).Points
+                    polyPoints.Add($"{pnt.X:f2} {pnt.Y:f2}")
+                Next
+                result = $"poly:""{Strings.Join(polyPoints.ToArray, " ")}"""
+                Clipboard.SetText(result)           ' copy to clipboard
+                MsgBox(result, vbInformation + vbOK, "Result in clipboard")        ' add closing double quote
+            End If
+        End With
+    End Sub
 End Module

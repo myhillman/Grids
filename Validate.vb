@@ -10,16 +10,13 @@ Module Validate
         Dim AcceptableCollisions As New List(Of (A As String, B As String)) From {
             {("Finland", "Aland Is")},
             {("Alaska", "Canada")},
-            {("Canada", "Sable Is")},
-            {("Canada", "St Paul Is")},
             {("Canada", "United States")},
             {("Cuba", "Guantanamo Bay")},
             {("Italy", "Vatican")},
             {("United Nations HQ", "United States")},
             {("Argentina", "Chile")},
             {("Morocco", "Western Sahara")},
-            {("Desecheo Is", "Puerto Rico")},
-{("Sudan", "South Sudan")}
+            {("Sudan", "South Sudan")}
 }
         Form1.AppendText(Form1.TextBox1, $"The following collisions are deemed acceptable/unavoidable{vbCrLf}")
         For Each accept In AcceptableCollisions
