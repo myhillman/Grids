@@ -46,7 +46,7 @@ Module KMLExport
         kml.WriteLine($"<name>{KMLescape(SQLdr("Entity"))} ({SQLdr("prefix")})</name>")
         Dim LabelPoint = boundaries.LabelPoint
         kml.Write($"<Point>")
-        KMLcoordinates(kml, LabelPoint, 4)
+        KMLcoordinates(kml, LabelPoint, 0)
         kml.WriteLine("</Point>")
         prefixes.Add((LabelPoint, SQLdr("prefix")))     ' for the prefix folder
         kml.WriteLine("<ExtendedData>")
@@ -58,15 +58,15 @@ Module KMLExport
         kml.WriteLine($"<Data name=""IARU Region""><value>{SQLdr("IARU")}</value></Data>")
         kml.WriteLine($"<Data name=""Continent""><value>{SQLdr("Continent")}</value></Data>")
         kml.WriteLine($"<Data name=""Start Date""><value>{SQLdr("StartDate")}</value></Data>")
-        kml.WriteLine($"<Data name=""lat""><value>{SQLdr("lat")}</value></Data>")
-        kml.WriteLine($"<Data name=""lon""><value>{SQLdr("lon")}</value></Data>")
+        kml.WriteLine($"<Data name=""lat""><value>{SQLdr("lat"):f3}</value></Data>")
+        kml.WriteLine($"<Data name=""lon""><value>{SQLdr("lon"):f3}</value></Data>")
         If Not IsDBNull(SQLdr("query")) Then
             Dim QL = SQLdr("query")
             If Not IsDBNull(SQLdr("bbox")) Then QL &= $"({SQLdr("bbox")})"      ' add bounding box if any
             kml.WriteLine($"<Data name=""OSM query""><value>{KMLescape(QL)}</value></Data>")
         End If
         If Not IsDBNull(SQLdr("notes")) Then
-            kml.WriteLine($"<Data name=""Notes""><value><![CDATA[{Form1.hyperlink(SQLdr("notes"))}]]></value></Data>")
+            kml.WriteLine($"<Data name=""Notes""><value><![CDATA[{Form1.Hyperlink(SQLdr("notes"))}]]></value></Data>")
         End If
         kml.WriteLine("</ExtendedData>")
         If boundaries.Parts.Count > 1 Then kml.WriteLine("<MultiGeometry>")
@@ -82,15 +82,13 @@ Module KMLExport
                 While (tagStack.Count > 0)
                     kml.WriteLine(tagStack.Pop)     ' empty the stack
                 End While
-                kml.WriteLine("<Polygon>")    ' open new one
+                kml.WriteLine("<Polygon><tessellate>1</tessellate><outerBoundaryIs>")    ' open new one
                 tagStack.Push("</Polygon>")         ' push end tag
-                kml.WriteLine("<tessellate>1</tessellate>")
-                kml.WriteLine("<outerBoundaryIs>")
                 tagStack.Push("</outerBoundaryIs>")
             End If
             ' Now write the boundary (inner or outer)
             kml.WriteLine("<LinearRing>")
-            KMLcoordinates(kml, Prt.Points.ToList, 5)
+            KMLcoordinates(kml, Prt.Points.ToList, 3)
             kml.WriteLine("</LinearRing>")
             kml.WriteLine(tagStack.Pop)    ' close of boundaryIs
         Next
@@ -131,7 +129,7 @@ Module KMLExport
         prefixes = prefixes.OrderBy(Function(a) a.pfx).ToList        ' sort prefix
         For Each prefix In prefixes
             kml.Write($"<Placemark><name>{prefix.pfx}</name><styleUrl>#prefix</styleUrl><Point>")
-            KMLcoordinates(kml, prefix.p, 2)
+            KMLcoordinates(kml, prefix.p, 0)
             kml.WriteLine("</Point></Placemark>")
         Next
         kml.WriteLine("</Folder>")
@@ -162,7 +160,7 @@ Module KMLExport
             End If
             ' Write out the linestring
             kml.WriteLine("<LineString><tessellate>1</tessellate>")
-            KMLcoordinates(kml, box.Points.ToList, 2)
+            KMLcoordinates(kml, box.Points.ToList, 1)
             kml.WriteLine("</LineString>")
             kml.WriteLine($"</Placemark>")
         Next
@@ -401,12 +399,12 @@ Module KMLExport
         While SQLdr.Read
             kml.WriteLine($"<Placemark><name>{KMLescape(SQLdr("name"))}</name><visibility>0</visibility><styleUrl>#antarctic</styleUrl>")
             Dim point As MapPoint = Geometry.FromJson(SQLdr("coordinates"))
-            kml.WriteLine($"<Point><coordinates>{point.X:f4},{point.Y:f4}</coordinates></Point>")
+            kml.WriteLine($"<Point><coordinates>{point.X:f2},{point.Y:f2}</coordinates></Point>")
             kml.WriteLine("<ExtendedData>")
             kml.WriteLine($"<Data name=""name""><value>{KMLescape(SQLdr("name"))}</value></Data>")
             kml.WriteLine($"<Data name=""nation""><value>{KMLescape(SQLdr("nation"))}</value></Data>")
-            kml.WriteLine($"<Data name=""lat""><value>{point.Y:f4}</value></Data>")
-            kml.WriteLine($"<Data name=""lon""><value>{point.X:f4}</value></Data>")
+            kml.WriteLine($"<Data name=""lat""><value>{point.Y:f3}</value></Data>")
+            kml.WriteLine($"<Data name=""lon""><value>{point.X:f3}</value></Data>")
             kml.WriteLine($"<Data name=""situation""><value>{KMLescape(SQLdr("situation"))}</value></Data>")
             kml.WriteLine($"<Data name=""altitude""><value>{SQLdr("altitude")}</value></Data>")
             kml.WriteLine($"<Data name=""open""><value>{KMLescape(SQLdr("open"))}</value></Data>")
@@ -438,7 +436,7 @@ Module KMLExport
         Debug.Assert(digits >= 0 And digits <= 8, $"bad digits value {digits}")
         Const BlockSize = 10      ' max coordinates per line
         kml.Write($"<coordinates>")
-        If points.Count > 1 Then kml.WriteLine()
+        If points.Count > BlockSize Then kml.WriteLine()        ' small blocks fit on same line as <coordinates>
         Dim index As Integer = 0
         Dim last As Integer
         Do
@@ -450,10 +448,9 @@ Module KMLExport
                 kml.Write($"{X},{Y}")
                 If ndx < last Then kml.Write(" ")
             Next
-            If points.Count > 1 Then kml.WriteLine()    ' end of block
+            If points.Count > BlockSize Then kml.WriteLine()    ' end of block
             index += BlockSize       ' next block
         Loop Until index >= points.Count    ' all points done
-        kml.Write("</coordinates>")
-        If points.Count > 1 Then kml.WriteLine()
+        kml.WriteLine("</coordinates>")
     End Sub
 End Module

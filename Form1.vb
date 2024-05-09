@@ -386,10 +386,17 @@ There are some additional folders which are closed by default. You must open the
                 Dim bbox As String = ""
                 If Not IsDBNull(SQLdr("bbox")) AndAlso SQLdr("bbox") <> "" Then
                     pb = ParseBox(SQLdr("bbox"), SQLdr("entity") = "Fiji")
+                    ' Check if bbox is a rectangle. If so it will have 5 points, and vertical/horizontal sides
                     If pb IsNot Nothing Then
-                        If pb.Points.Count = 5 AndAlso pb.Points(0).Distance(pb.Points(3)) = pb.Points(1).Distance(pb.Points(4)) Then   ' 4 sided object is rectangular if diagonals are equal
-                            bbox = $"({SQLdr("bbox")})"
-                        End If
+                        With pb.Points
+                            If .Count = 5 And
+                                (.Item(0).X = .Item(1).X Or .Item(0).Y = .Item(1).Y) And
+                                 (.Item(1).X = .Item(2).X Or .Item(1).Y = .Item(2).Y) And
+                                  (.Item(2).X = .Item(3).X Or .Item(2).Y = .Item(3).Y) And
+                                   (.Item(3).X = .Item(0).X Or .Item(3).Y = .Item(0).Y) Then
+                                bbox = $"({SQLdr("bbox")})"
+                            End If
+                        End With
                     End If
                 End If
                 query = $"[out:json][timeout:100];
@@ -440,7 +447,7 @@ There are some additional folders which are closed by default. You must open the
             ' Now apply polygon bounding box (if any)
             If pb IsNot Nothing Then
                 If Not (pb.Points.Count = 5 AndAlso pb.Points(0).Distance(pb.Points(2)) = pb.Points(1).Distance(pb.Points(3))) Then   ' 4 sided object is rectangular if diagonals are equal
-                    Dim pbPoly As Polygon = New Polygon(pb.Points)
+                    Dim pbPoly As New Polygon(pb.Points)
                     poly = poly.Intersection(pbPoly)
                 End If
             End If
@@ -455,7 +462,7 @@ There are some additional folders which are closed by default. You must open the
         Return 1
     End Function
 
-    Sub ProcessWay(json As JsonNode, ByRef plb As PolylineBuilder)
+    Shared Sub ProcessWay(json As JsonNode, ByRef plb As PolylineBuilder)
         ' Process an individual way
         Dim way = New Part(plb.SpatialReference)
         For Each pnt In json!geometry.AsArray
@@ -465,14 +472,15 @@ There are some additional folders which are closed by default. You must open the
             plb.AddPart(way)
         End If
     End Sub
-    Function ParseBox(bbox As String, antimeridian As Boolean) As Geometry
+
+    Shared Function ParseBox(bbox As String, antimeridian As Boolean) As Geometry
         ' Convert a Bounding Box specification to a multipoint
         ' It may be a bbox of form "a,b,c,d",  or a polygon of form "poly:a b c d e f g h i j"
         Dim mpb As New MultipointBuilder(SpatialReferences.Wgs84), result As Multipoint = Nothing
 
         If IsDBNullorEmpty(bbox) Then Return result        ' no bounds
         Dim groups = bbox.Split(",")
-        If groups.Count = 4 Then        ' could be a box
+        If groups.Length = 4 Then        ' could be a box
             If Not antimeridian Then
                 If (CDbl(groups(0)) > CDbl(groups(2)) Or CDbl(groups(1)) > CDbl(groups(3))) Then
                     MsgBox($"Bounding box {bbox} is malformed", vbCritical + vbOKOnly, "Bad bounding box")
@@ -483,18 +491,18 @@ There are some additional folders which are closed by default. You must open the
                 MsgBox($"Bad lat/lon in bounding box {bbox}", vbCritical + vbOKOnly, "Bad coordinate")
             End If
             mpb.Points.Add(New MapPoint(CDbl(groups(1)), CDbl(groups(0))))
-                mpb.Points.Add(New MapPoint(CDbl(groups(1)), CDbl(groups(2))))
-                mpb.Points.Add(New MapPoint(CDbl(groups(3)), CDbl(groups(2))))
-                mpb.Points.Add(New MapPoint(CDbl(groups(3)), CDbl(groups(0))))
-                mpb.Points.Add(New MapPoint(CDbl(groups(1)), CDbl(groups(0))))
-                result = mpb.ToGeometry
-            Else        ' might be a polygon
-                Dim matches = Regex.Match(bbox, "^poly:""([\d\.\- ]+)""$")
+            mpb.Points.Add(New MapPoint(CDbl(groups(1)), CDbl(groups(2))))
+            mpb.Points.Add(New MapPoint(CDbl(groups(3)), CDbl(groups(2))))
+            mpb.Points.Add(New MapPoint(CDbl(groups(3)), CDbl(groups(0))))
+            mpb.Points.Add(New MapPoint(CDbl(groups(1)), CDbl(groups(0))))
+            result = mpb.ToGeometry
+        Else        ' might be a polygon
+            Dim matches = Regex.Match(bbox, "^poly:""([\d\.\- ]+)""$")
             If matches.Success Then
                 Dim data = Split(matches.Groups(1).Value, " ")      ' split space separated list of coordinates
                 Dim X As Double, Y As Double
-                Debug.Assert(data.Count Mod 2 = 0, "Odd number of coordinates")
-                For i = 0 To data.Count - 1 Step 2
+                Debug.Assert(data.Length Mod 2 = 0, "Odd number of coordinates")
+                For i = 0 To data.Length - 1 Step 2
                     Debug.Assert(Double.TryParse(data(i), Y), "Badly formed double")
                     Debug.Assert(Double.TryParse(data(i + 1), X), "Badly formed double")
                     If Not (Between(X, -180, 180) And Between(Y, -90, 90)) Then
@@ -507,7 +515,8 @@ There are some additional folders which are closed by default. You must open the
         End If
         Return result
     End Function
-    Function Between(value As Double, low As Double, high As Double) As Boolean
+
+    Shared Function Between(value As Double, low As Double, high As Double) As Boolean
         ' test if value is between low and high limit
         Debug.Assert(low <= high, "Low value must be less than high value")
         Return value >= low And value <= high
@@ -534,7 +543,7 @@ There are some additional folders which are closed by default. You must open the
         Dim original As New PolylineBuilder(plb.ToGeometry)        ' save if needed
 
         Debug.Assert(Not (plb.IsEmpty Or plb.Parts.Count = 0), $"Empty PolyLineBuilder")
-        Debug.Assert(String.IsNullOrEmpty(country), "Bad country")
+        Debug.Assert(Not String.IsNullOrEmpty(country), "Bad country")
 
         ' dump out ways fro debug purposes
         'Using dump As New StreamWriter("PLB dump.txt", False)
@@ -808,10 +817,8 @@ There are some additional folders which are closed by default. You must open the
         End If
     End Sub
     Shared Function CoIncident(a As MapPoint, b As MapPoint) As Boolean
-        ' test if points are coincident with small tolerance
-        Const tol = 0.000001
+        ' test if points are coincident
         Return a.IsEqual(b)
-        'Return Math.Abs(a.X - b.X) <= tol AndAlso Math.Abs(a.Y - b.Y) <= tol AndAlso a.SpatialReference.Wkid = b.SpatialReference.Wkid
     End Function
     Shared Function ReversePart(p As Part) As Part
         ' reverse the order of points in a part
@@ -976,82 +983,10 @@ There are some additional folders which are closed by default. You must open the
 
     Private Sub EntityReportToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles EntityReportToolStripMenuItem.Click
         ' Create list of entities and state of geometry
-        Dim sql As SqliteCommand, SQLdr As SqliteDataReader
-        Dim partcount As Integer, pointcount As Integer, JSONcount As Integer, lines As Integer = 0
-        Dim TotalEntity As Integer = 0, TotalParts As Integer = 0, TotalPoints As Integer = 0, TotalQueries As Integer = 0, TotalJSON As Integer = 0
-        Dim TotalUnclosed As Integer = 0, TotalNotes As Integer = 0, TotalBbox As Integer = 0
-        Dim outer As Integer, inner As Integer, unclosed As Integer
-
-        Using connect As New SqliteConnection(DXCC_DATA),
-              html As New StreamWriter($"{Application.StartupPath}\DXCC.html", False)
-            connect.Open()
-            sql = connect.CreateCommand
-            ' Find total entries in report
-            sql.CommandText = "select count(*) as Total from DXCC where Deleted=0 and DXCCnum != 999"
-            SQLdr = sql.ExecuteReader
-            SQLdr.Read()
-            With ProgressBar1
-                .Minimum = 0
-                .Maximum = SQLdr("Total")
-                .Value = 0
-            End With
-            SQLdr.Close()
-            sql.CommandText = "select * from `DXCC` where `Deleted`=0 and DXCCnum != 999 order by `Entity`"
-            SQLdr = sql.ExecuteReader
-            html.WriteLine("<!DOCTYPE html>")
-            html.WriteLine("<style> table td:nth-child(2), td:nth-child(3), td:nth-child(4),td:nth-child(5),td:nth-child(6) {text-align:right;} .red td{color:red;font-weight: bold;}</style>")
-            html.WriteLine("<table border=1>")
-            html.WriteLine("<tr><th>Entity</th><th>Parts</th><th>Outer</th><th>Inner</th><th>Points</th><th>Unclosed</th><th>JSON</th><th>OSM Overpass QL</th><th>bbox</th><th>Notes</th></tr>")
-            While SQLdr.Read
-                ProgressBar1.Value += 1
-                partcount = 0
-                pointcount = 0
-                JSONcount = 0
-                outer = 0
-                inner = 0
-                unclosed = 0
-                If Not IsDBNullorEmpty(SQLdr("query")) Then TotalQueries += 1
-                Dim cls = " class=red"
-                If Not IsDBNullorEmpty(SQLdr("geometry")) Then
-                    Dim geometry As Polygon = Polygon.FromJson(SQLdr("geometry"))
-                    If Not geometry.IsEmpty Then cls = ""
-                    JSONcount = SQLdr("geometry").ToString.Length
-                    TotalJSON += JSONcount
-                    partcount = geometry.Parts.Count
-
-                    For Each prt In geometry.Parts
-                        pointcount += prt.PointCount
-                        If PolygonArea(prt) < 0 Then outer += 1 Else inner += 1
-                        If Not prt.Points.First.IsEqual(prt.Points.Last) Then unclosed += 1
-                    Next
-                    TotalUnclosed += unclosed
-                End If
-                TotalEntity += 1
-                TotalParts += partcount
-                TotalPoints += pointcount
-                Dim bbox As String, notes As String
-                If IsDBNullorEmpty(SQLdr("bbox")) Then
-                    bbox = ""
-                Else
-                    bbox = $"({SQLdr("bbox")})"
-                    TotalBbox += 1
-                End If
-                If IsDBNullorEmpty(SQLdr("notes")) Then
-                    notes = ""
-                Else
-                    notes = hyperlink(SQLdr("notes"))
-                    TotalNotes += 1
-                End If
-                html.WriteLine($"<tr{cls}><td>{Strings.Replace(SQLdr("Entity"), " ", "&nbsp;")}</td><td>{partcount:n0}</td><td>{outer}</td><td>{inner}</td><td>{pointcount:n0}</td><td>{unclosed}</td><td>{JSONcount:n0}</td><td>{SQLdr("query")}</td><td>{bbox}</td><td>{notes}</td></tr>")
-                lines += 1
-            End While
-            html.WriteLine($"<tr><td>{TotalEntity}</td><td>{TotalParts:n0}</td><td></td><td></td><td>{TotalPoints:n0}</td><td>{TotalUnclosed:n0}</td><td>{TotalJSON:n0}</td><td>{TotalQueries}</td><td>{TotalBbox}</td><td>{TotalNotes}</td></tr>")
-            html.WriteLine("</table>")
-            AppendText(TextBox1, $"{lines} lines written To html file{vbCrLf}")
-        End Using
+        EntityReport
     End Sub
 
-    Function hyperlink(links As String) As String
+    Shared Function Hyperlink(links As String) As String
         ' convert a list of hyperlinks, separated by semi-colon, and return html hyperlinks separated by <br>
         Dim hyperlinkList As New List(Of String)
         Dim hyperlinks = links.Split(";").ToList
@@ -1061,7 +996,6 @@ There are some additional folders which are closed by default. You must open the
         For Each link In hyperlinks
             Dim matches = Regex.Match(link, "^https.*?-(.*)$")
             hyperlinkList.Add($"<a href=""{link}"">{matches.Groups(1)}</a>")
-            Dim i = 1
         Next
         Return String.Join(";<br>", hyperlinkList)
     End Function
@@ -1293,7 +1227,6 @@ There are some additional folders which are closed by default. You must open the
         End Using
     End Sub
 
-
     Private Sub ImportCQITUZonesToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles ImportCQITUZonesToolStripMenuItem.Click
         ImportCQITUZones()
     End Sub
@@ -1356,51 +1289,11 @@ There are some additional folders which are closed by default. You must open the
 
     Private Sub GeometrySizeTableToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles GeometrySizeTableToolStripMenuItem.Click
         ' Create list of geometry sizes
-        Dim sql As SqliteCommand, SQLdr As SqliteDataReader
-        Dim partcount As Integer, lines As Integer = 0
-        Dim TotalEntity As Integer = 0, TotalParts As Integer = 0, TotalPoints As Integer = 0, TotalQueries As Integer = 0, TotalJSON As Integer = 0
-        Dim TotalUnclosed As Integer = 0, TotalNotes As Integer = 0, TotalBbox As Integer = 0
-        Dim TotalSize As Integer = 0
+        GeometrySizeTable
+    End Sub
 
-        Using connect As New SqliteConnection(DXCC_DATA),
-              html As New StreamWriter($"{Application.StartupPath}\Geometry Size.html", False)
-            connect.Open()
-            sql = connect.CreateCommand
-            ' Find total size of geometry
-            sql.CommandText = "select sum(length(geometry)) as TotalSize from DXCC where Deleted=0 and DXCCnum != 999"
-            SQLdr = sql.ExecuteReader
-            SQLdr.Read()
-            TotalSize = SQLdr("TotalSize")
-            SQLdr.Close()
-            ' Find total entries in report
-            sql.CommandText = "select count(*) as Total from DXCC where Deleted=0 and DXCCnum != 999"
-            SQLdr = sql.ExecuteReader
-            SQLdr.Read()
-            With ProgressBar1
-                .Minimum = 0
-                .Maximum = SQLdr("Total")
-                .Value = 0
-            End With
-            SQLdr.Close()
-            sql.CommandText = "select *,LENGTH(geometry) AS size from `DXCC` where `Deleted`=0 and DXCCnum != 999 ORDER BY size DESC"
-            SQLdr = sql.ExecuteReader
-            html.WriteLine("<!DOCTYPE html>")
-            html.WriteLine("<style> table td:nth-child(2), td:nth-child(3), td:nth-child(4),td:nth-child(5),td:nth-child(6) {text-align:right;} .red td{color:red;font-weight: bold;}</style>")
-            html.WriteLine("<table border=1>")
-            html.WriteLine("<tr><th>Entity</th><th>Parts</th><th>Geometry Size</th><th>Percent</th></tr>")
-            While SQLdr.Read
-                ProgressBar1.Value += 1
-                TotalEntity += 1
-                Dim poly As Polygon = Geometry.FromJson(SQLdr("geometry"))
-                partcount = poly.Parts.Count
-                TotalParts += partcount
-                html.WriteLine($"<tr><td>{Strings.Replace(SQLdr("Entity"), " ", "&nbsp;")}</td><td>{partcount:n0}</td><td>{SQLdr("size")}</td><td>{SQLdr("size") / TotalSize * 100:f1}</td></tr>")
-                lines += 1
-            End While
-            html.WriteLine($"<tr><td>{TotalEntity}</td><td>{TotalParts:n0}</td><td>{TotalSize:n0}</td><td></td></tr>")
-            html.WriteLine("</table>")
-            AppendText(TextBox1, $"{lines} lines written To html file{vbCrLf}")
-        End Using
+    Private Sub KMLFileSizeToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles KMLFileSizeToolStripMenuItem.Click
+        KMLFileSize
     End Sub
 End Class
 

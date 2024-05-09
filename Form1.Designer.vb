@@ -30,7 +30,6 @@ Partial Class Form1
         MakeKMLByCQZoneToolStripMenuItem = New ToolStripMenuItem()
         MakeKMLAllEntitiesToolStripMenuItem = New ToolStripMenuItem()
         MakeShapefileToolStripMenuItem = New ToolStripMenuItem()
-        EntityReportToolStripMenuItem = New ToolStripMenuItem()
         ReprocessCountryToolStripMenuItem = New ToolStripMenuItem()
         ExitToolStripMenuItem = New ToolStripMenuItem()
         ImportToolStripMenuItem = New ToolStripMenuItem()
@@ -54,9 +53,12 @@ Partial Class Form1
         IOTACheckToolStripMenuItem = New ToolStripMenuItem()
         InnerRingsToolStripMenuItem = New ToolStripMenuItem()
         AdjacentColorCheckToolStripMenuItem = New ToolStripMenuItem()
-        GeometrySizeTableToolStripMenuItem = New ToolStripMenuItem()
         TestToolStripMenuItem = New ToolStripMenuItem()
         ParseBoxToolStripMenuItem = New ToolStripMenuItem()
+        ReportsToolStripMenuItem = New ToolStripMenuItem()
+        KMLFileSizeToolStripMenuItem = New ToolStripMenuItem()
+        EntityReportToolStripMenuItem = New ToolStripMenuItem()
+        GeometrySizeTableToolStripMenuItem = New ToolStripMenuItem()
         TextBox1 = New TextBox()
         ProgressBar1 = New ProgressBar()
         DummyToolStripMenuItem = New ToolStripMenuItem()
@@ -66,7 +68,7 @@ Partial Class Form1
         ' 
         ' MenuStrip1
         ' 
-        MenuStrip1.Items.AddRange(New ToolStripItem() {UseShapefileToolStripMenuItem, ImportToolStripMenuItem, ChecksToolStripMenuItem, TestToolStripMenuItem})
+        MenuStrip1.Items.AddRange(New ToolStripItem() {UseShapefileToolStripMenuItem, ImportToolStripMenuItem, ChecksToolStripMenuItem, ReportsToolStripMenuItem, TestToolStripMenuItem})
         MenuStrip1.Location = New Point(0, 0)
         MenuStrip1.Name = "MenuStrip1"
         MenuStrip1.Size = New Size(1286, 24)
@@ -75,7 +77,7 @@ Partial Class Form1
         ' 
         ' UseShapefileToolStripMenuItem
         ' 
-        UseShapefileToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {UseShapefileToolStripMenuItem1, UseOSMToolStripMenuItem, MakeKMLToolStripMenuItem, MakeKMLByCQZoneToolStripMenuItem, MakeKMLAllEntitiesToolStripMenuItem, MakeShapefileToolStripMenuItem, EntityReportToolStripMenuItem, ReprocessCountryToolStripMenuItem, ExitToolStripMenuItem})
+        UseShapefileToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {UseShapefileToolStripMenuItem1, UseOSMToolStripMenuItem, MakeKMLToolStripMenuItem, MakeKMLByCQZoneToolStripMenuItem, MakeKMLAllEntitiesToolStripMenuItem, MakeShapefileToolStripMenuItem, ReprocessCountryToolStripMenuItem, ExitToolStripMenuItem})
         UseShapefileToolStripMenuItem.Name = "UseShapefileToolStripMenuItem"
         UseShapefileToolStripMenuItem.Size = New Size(37, 20)
         UseShapefileToolStripMenuItem.Text = "File"
@@ -115,12 +117,6 @@ Partial Class Form1
         MakeShapefileToolStripMenuItem.Name = "MakeShapefileToolStripMenuItem"
         MakeShapefileToolStripMenuItem.Size = New Size(194, 22)
         MakeShapefileToolStripMenuItem.Text = "Make Shapefile"
-        ' 
-        ' EntityReportToolStripMenuItem
-        ' 
-        EntityReportToolStripMenuItem.Name = "EntityReportToolStripMenuItem"
-        EntityReportToolStripMenuItem.Size = New Size(194, 22)
-        EntityReportToolStripMenuItem.Text = "Entity Report"
         ' 
         ' ReprocessCountryToolStripMenuItem
         ' 
@@ -222,7 +218,7 @@ Partial Class Form1
         ' 
         ' ChecksToolStripMenuItem
         ' 
-        ChecksToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {CheckISO3166ReferencesToolStripMenuItem, CountryCollisionsToolStripMenuItem, RemoveEmptyGeometryToolStripMenuItem, IOTACheckToolStripMenuItem, InnerRingsToolStripMenuItem, AdjacentColorCheckToolStripMenuItem, GeometrySizeTableToolStripMenuItem})
+        ChecksToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {CheckISO3166ReferencesToolStripMenuItem, CountryCollisionsToolStripMenuItem, RemoveEmptyGeometryToolStripMenuItem, IOTACheckToolStripMenuItem, InnerRingsToolStripMenuItem, AdjacentColorCheckToolStripMenuItem})
         ChecksToolStripMenuItem.Name = "ChecksToolStripMenuItem"
         ChecksToolStripMenuItem.Size = New Size(57, 20)
         ChecksToolStripMenuItem.Text = "Checks"
@@ -263,12 +259,6 @@ Partial Class Form1
         AdjacentColorCheckToolStripMenuItem.Size = New Size(209, 22)
         AdjacentColorCheckToolStripMenuItem.Text = "Adjacent color check"
         ' 
-        ' GeometrySizeTableToolStripMenuItem
-        ' 
-        GeometrySizeTableToolStripMenuItem.Name = "GeometrySizeTableToolStripMenuItem"
-        GeometrySizeTableToolStripMenuItem.Size = New Size(209, 22)
-        GeometrySizeTableToolStripMenuItem.Text = "Geometry size table"
-        ' 
         ' TestToolStripMenuItem
         ' 
         TestToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {ParseBoxToolStripMenuItem})
@@ -279,8 +269,33 @@ Partial Class Form1
         ' ParseBoxToolStripMenuItem
         ' 
         ParseBoxToolStripMenuItem.Name = "ParseBoxToolStripMenuItem"
-        ParseBoxToolStripMenuItem.Size = New Size(122, 22)
+        ParseBoxToolStripMenuItem.Size = New Size(180, 22)
         ParseBoxToolStripMenuItem.Text = "ParseBox"
+        ' 
+        ' ReportsToolStripMenuItem
+        ' 
+        ReportsToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {KMLFileSizeToolStripMenuItem, EntityReportToolStripMenuItem, GeometrySizeTableToolStripMenuItem})
+        ReportsToolStripMenuItem.Name = "ReportsToolStripMenuItem"
+        ReportsToolStripMenuItem.Size = New Size(59, 20)
+        ReportsToolStripMenuItem.Text = "Reports"
+        ' 
+        ' KMLFileSizeToolStripMenuItem
+        ' 
+        KMLFileSizeToolStripMenuItem.Name = "KMLFileSizeToolStripMenuItem"
+        KMLFileSizeToolStripMenuItem.Size = New Size(180, 22)
+        KMLFileSizeToolStripMenuItem.Text = "KML file size"
+        ' 
+        ' EntityReportToolStripMenuItem
+        ' 
+        EntityReportToolStripMenuItem.Name = "EntityReportToolStripMenuItem"
+        EntityReportToolStripMenuItem.Size = New Size(180, 22)
+        EntityReportToolStripMenuItem.Text = "Entity Report"
+        ' 
+        ' GeometrySizeTableToolStripMenuItem
+        ' 
+        GeometrySizeTableToolStripMenuItem.Name = "GeometrySizeTableToolStripMenuItem"
+        GeometrySizeTableToolStripMenuItem.Size = New Size(180, 22)
+        GeometrySizeTableToolStripMenuItem.Text = "Geometry size table"
         ' 
         ' TextBox1
         ' 
@@ -363,5 +378,7 @@ Partial Class Form1
     Friend WithEvents ImportPolyFromKMLToolStripMenuItem As ToolStripMenuItem
     Friend WithEvents OpenFileDialog1 As OpenFileDialog
     Friend WithEvents GeometrySizeTableToolStripMenuItem As ToolStripMenuItem
+    Friend WithEvents ReportsToolStripMenuItem As ToolStripMenuItem
+    Friend WithEvents KMLFileSizeToolStripMenuItem As ToolStripMenuItem
 
 End Class
