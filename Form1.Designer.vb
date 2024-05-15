@@ -46,6 +46,7 @@ Partial Class Form1
         ImportIOTADXCCMatchesOneIOTAToolStripMenuItem = New ToolStripMenuItem()
         ImportAntarcticaToolStripMenuItem = New ToolStripMenuItem()
         ImportPolyFromKMLToolStripMenuItem = New ToolStripMenuItem()
+        ImportLandSquareListToolStripMenuItem = New ToolStripMenuItem()
         ChecksToolStripMenuItem = New ToolStripMenuItem()
         CheckISO3166ReferencesToolStripMenuItem = New ToolStripMenuItem()
         CountryCollisionsToolStripMenuItem = New ToolStripMenuItem()
@@ -53,12 +54,12 @@ Partial Class Form1
         IOTACheckToolStripMenuItem = New ToolStripMenuItem()
         InnerRingsToolStripMenuItem = New ToolStripMenuItem()
         AdjacentColorCheckToolStripMenuItem = New ToolStripMenuItem()
-        TestToolStripMenuItem = New ToolStripMenuItem()
-        ParseBoxToolStripMenuItem = New ToolStripMenuItem()
         ReportsToolStripMenuItem = New ToolStripMenuItem()
         KMLFileSizeToolStripMenuItem = New ToolStripMenuItem()
         EntityReportToolStripMenuItem = New ToolStripMenuItem()
         GeometrySizeTableToolStripMenuItem = New ToolStripMenuItem()
+        TestToolStripMenuItem = New ToolStripMenuItem()
+        ParseBoxToolStripMenuItem = New ToolStripMenuItem()
         TextBox1 = New TextBox()
         ProgressBar1 = New ProgressBar()
         DummyToolStripMenuItem = New ToolStripMenuItem()
@@ -132,7 +133,7 @@ Partial Class Form1
         ' 
         ' ImportToolStripMenuItem
         ' 
-        ImportToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {ImportISO3166ToolStripMenuItem, ImportEUASBorderToolStripMenuItem, ImportCQITUZonesToolStripMenuItem, ImportTimezonesToolStripMenuItem, ImportIARURegionsToolStripMenuItem, UseOSMLandPolygonsToolStripMenuItem, ImportAntarcticBasesToolStripMenuItem, ImportIOTAToolStripMenuItem, ImportAntarcticaToolStripMenuItem, ImportPolyFromKMLToolStripMenuItem})
+        ImportToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {ImportISO3166ToolStripMenuItem, ImportEUASBorderToolStripMenuItem, ImportCQITUZonesToolStripMenuItem, ImportTimezonesToolStripMenuItem, ImportIARURegionsToolStripMenuItem, UseOSMLandPolygonsToolStripMenuItem, ImportAntarcticBasesToolStripMenuItem, ImportIOTAToolStripMenuItem, ImportAntarcticaToolStripMenuItem, ImportPolyFromKMLToolStripMenuItem, ImportLandSquareListToolStripMenuItem})
         ImportToolStripMenuItem.Name = "ImportToolStripMenuItem"
         ImportToolStripMenuItem.Size = New Size(55, 20)
         ImportToolStripMenuItem.Text = "Import"
@@ -216,6 +217,12 @@ Partial Class Form1
         ImportPolyFromKMLToolStripMenuItem.Size = New Size(217, 22)
         ImportPolyFromKMLToolStripMenuItem.Text = "Import poly from KML"
         ' 
+        ' ImportLandSquareListToolStripMenuItem
+        ' 
+        ImportLandSquareListToolStripMenuItem.Name = "ImportLandSquareListToolStripMenuItem"
+        ImportLandSquareListToolStripMenuItem.Size = New Size(217, 22)
+        ImportLandSquareListToolStripMenuItem.Text = "Import land square list"
+        ' 
         ' ChecksToolStripMenuItem
         ' 
         ChecksToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {CheckISO3166ReferencesToolStripMenuItem, CountryCollisionsToolStripMenuItem, RemoveEmptyGeometryToolStripMenuItem, IOTACheckToolStripMenuItem, InnerRingsToolStripMenuItem, AdjacentColorCheckToolStripMenuItem})
@@ -259,19 +266,6 @@ Partial Class Form1
         AdjacentColorCheckToolStripMenuItem.Size = New Size(209, 22)
         AdjacentColorCheckToolStripMenuItem.Text = "Adjacent color check"
         ' 
-        ' TestToolStripMenuItem
-        ' 
-        TestToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {ParseBoxToolStripMenuItem})
-        TestToolStripMenuItem.Name = "TestToolStripMenuItem"
-        TestToolStripMenuItem.Size = New Size(39, 20)
-        TestToolStripMenuItem.Text = "Test"
-        ' 
-        ' ParseBoxToolStripMenuItem
-        ' 
-        ParseBoxToolStripMenuItem.Name = "ParseBoxToolStripMenuItem"
-        ParseBoxToolStripMenuItem.Size = New Size(180, 22)
-        ParseBoxToolStripMenuItem.Text = "ParseBox"
-        ' 
         ' ReportsToolStripMenuItem
         ' 
         ReportsToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {KMLFileSizeToolStripMenuItem, EntityReportToolStripMenuItem, GeometrySizeTableToolStripMenuItem})
@@ -282,20 +276,33 @@ Partial Class Form1
         ' KMLFileSizeToolStripMenuItem
         ' 
         KMLFileSizeToolStripMenuItem.Name = "KMLFileSizeToolStripMenuItem"
-        KMLFileSizeToolStripMenuItem.Size = New Size(180, 22)
+        KMLFileSizeToolStripMenuItem.Size = New Size(177, 22)
         KMLFileSizeToolStripMenuItem.Text = "KML file size"
         ' 
         ' EntityReportToolStripMenuItem
         ' 
         EntityReportToolStripMenuItem.Name = "EntityReportToolStripMenuItem"
-        EntityReportToolStripMenuItem.Size = New Size(180, 22)
+        EntityReportToolStripMenuItem.Size = New Size(177, 22)
         EntityReportToolStripMenuItem.Text = "Entity Report"
         ' 
         ' GeometrySizeTableToolStripMenuItem
         ' 
         GeometrySizeTableToolStripMenuItem.Name = "GeometrySizeTableToolStripMenuItem"
-        GeometrySizeTableToolStripMenuItem.Size = New Size(180, 22)
+        GeometrySizeTableToolStripMenuItem.Size = New Size(177, 22)
         GeometrySizeTableToolStripMenuItem.Text = "Geometry size table"
+        ' 
+        ' TestToolStripMenuItem
+        ' 
+        TestToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {ParseBoxToolStripMenuItem})
+        TestToolStripMenuItem.Name = "TestToolStripMenuItem"
+        TestToolStripMenuItem.Size = New Size(39, 20)
+        TestToolStripMenuItem.Text = "Test"
+        ' 
+        ' ParseBoxToolStripMenuItem
+        ' 
+        ParseBoxToolStripMenuItem.Name = "ParseBoxToolStripMenuItem"
+        ParseBoxToolStripMenuItem.Size = New Size(122, 22)
+        ParseBoxToolStripMenuItem.Text = "ParseBox"
         ' 
         ' TextBox1
         ' 
@@ -309,6 +316,7 @@ Partial Class Form1
         ' ProgressBar1
         ' 
         ProgressBar1.Location = New Point(12, 465)
+        ProgressBar1.Maximum = 40000
         ProgressBar1.Name = "ProgressBar1"
         ProgressBar1.Size = New Size(776, 21)
         ProgressBar1.TabIndex = 2
@@ -380,5 +388,6 @@ Partial Class Form1
     Friend WithEvents GeometrySizeTableToolStripMenuItem As ToolStripMenuItem
     Friend WithEvents ReportsToolStripMenuItem As ToolStripMenuItem
     Friend WithEvents KMLFileSizeToolStripMenuItem As ToolStripMenuItem
+    Friend WithEvents ImportLandSquareListToolStripMenuItem As ToolStripMenuItem
 
 End Class

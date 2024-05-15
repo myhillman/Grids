@@ -133,7 +133,7 @@ Module KMLExport
             kml.WriteLine("</Point></Placemark>")
         Next
         kml.WriteLine("</Folder>")
-        Form1.AppendText(Form1.TextBox1, $" [{Timer.Elapsed.Seconds:f1}s]{vbCrLf}")
+        Form1.AppendText(Form1.TextBox1, $" [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")
     End Sub
     Sub BoundingBoxFolder(kml As StreamWriter, BoundingBoxes As List(Of (name As String, box As String)))
         ' Create the Bounding Box folder
@@ -150,29 +150,73 @@ Module KMLExport
         For Each BoundingBox In BoundingBoxes
             ' Display bounding box as a closed linestring
             kml.WriteLine($"<Placemark><name>{KMLescape(BoundingBox.name)}</name><visibility>0</visibility><styleUrl>#bbox</styleUrl>")
-            ' Densify the bounding box so that it clearly follows lat/lon lines better. Exclude Fiji as Densify takes long path
-            ' You can't seem to Densify a  Multipoint, so convert to Polygon, Densify, and convert back to Multipoint
-            Dim box As Multipoint = Geometry.FromJson(BoundingBox.box)        ' convert the json to geometry
-            If BoundingBox.name <> "Fiji" Then
-                Dim PolyBox As New Polygon(box.Points)          ' Convert to Polygon
-                PolyBox = PolyBox.Densify(DensifyDegrees)       ' Densify
-                box = New Multipoint(PolyBox.Parts(0).Points)   ' Convert back to Multipoint
-            End If
-            ' Write out the linestring
-            kml.WriteLine("<LineString><tessellate>1</tessellate>")
-            KMLcoordinates(kml, box.Points.ToList, 1)
-            kml.WriteLine("</LineString>")
+            ' Densify the bounding box so that it clearly follows lat/lon lines better. 
+            Dim Polybox As Polygon = Geometry.FromJson(BoundingBox.box)        ' convert the json to geometry
+            Polybox = Polybox.Densify(DensifyDegrees)       ' Densify
+            If Polybox.Parts.Count > 1 Then kml.WriteLine("<MultiGeometry>")
+            For Each prt In Polybox.Parts
+                ' Write out the linestring
+                kml.WriteLine("<LineString><tessellate>1</tessellate>")
+                KMLcoordinates(kml, prt.Points.ToList, 1)
+                kml.WriteLine("</LineString>")
+            Next
+            If Polybox.Parts.Count > 1 Then kml.WriteLine("</MultiGeometry>")
             kml.WriteLine($"</Placemark>")
         Next
         kml.WriteLine("</Folder>")
         timer.Stop()
         Form1.AppendText(Form1.TextBox1, $" [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")
     End Sub
+    Function NormalizeCentralMeridian(PolyBox As Polygon) As Polygon
+        ' Normalize a polygon if it crosses the central meridian. The ArcGis runtime primitive of the same name just doesn't seem to work
+        ' Normalize will split such a Polygon into 2 parts
+        Dim result = GeometryEngine.NormalizeCentralMeridian(PolyBox)
+        With PolyBox.Extent
+            If Math.Abs(.XMax - .XMin) > 180 Then       ' box crosses anti-meridian
+                Dim plb As New PolygonBuilder(SpatialReferences.Wgs84)
+                Dim Part1List As New List(Of MapPoint) From {{New MapPoint(180.0, 89.0, SpatialReferences.Wgs84)}, {New MapPoint(179.95, 89.0, SpatialReferences.Wgs84)}, {New MapPoint(179.95, -89.0, SpatialReferences.Wgs84)}, {New MapPoint(180.0, -89.0, SpatialReferences.Wgs84)}}
+                Dim Part1 As New Part(Part1List, SpatialReferences.Wgs84)
+                Dim Part2List As New List(Of MapPoint) From {{New MapPoint(-180.0, 89.0, SpatialReferences.Wgs84)}, {New MapPoint(-179.95, 89.0, SpatialReferences.Wgs84)}, {New MapPoint(-179.95, -89.0, SpatialReferences.Wgs84)}, {New MapPoint(-180.0, -89.0, SpatialReferences.Wgs84)}}
+                Dim Part2 As New Part(Part2List, SpatialReferences.Wgs84)
+                plb.AddPart(Part1)
+                plb.AddPart(Part2)
+                Dim splitter = plb.ToGeometry
+                Dim NormalBox = GeometryEngine.Intersections(PolyBox, splitter)
+                'Dim EastHemisphere As New Envelope(New MapPoint(0, -89.9, SpatialReferences.Wgs84), New MapPoint(179.999999999999, 89.9, SpatialReferences.Wgs84))
+                'EastHemisphere.BufferGeodetic(-1000, LinearUnits.Meters)
+                'Dim WestHemisphere As New Envelope(New MapPoint(0, -89.9, SpatialReferences.Wgs84), New MapPoint(-179.999999999999, 89.9, SpatialReferences.Wgs84))
+                'WestHemisphere.BufferGeodetic(-1000, LinearUnits.Meters)
+                'Dim PolyWest As Polygon = PolyBox.Intersection(WestHemisphere)
+                'Dim PolyEast As Polygon = PolyBox.Intersection(EastHemisphere)
+                'Dim plb As New PolygonBuilder(PolyWest)
+                'plb.AddParts(PolyEast.Parts)
+                'Dim NormalBox As New Polygon(plb.Parts)
+                Return NormalBox
+            Else
+                Return PolyBox       ' doesn't cross central meridian
+            End If
+        End With
+    End Function
+
+    Const EPS = 0.000001      ' a very small number (epsilon)
     Sub GridSquareFolder(connect As SqliteConnection, kml As StreamWriter, DXCClist As List(Of Integer))
         ' Create the Grid Square folder
-        Dim sql As SqliteCommand, SQLdr As SqliteDataReader, timer As New Stopwatch
+        Dim sql As SqliteCommand, SQLdr As SqliteDataReader, timer As New Stopwatch, Ocean As Integer = 0
+        Dim GridSquares As New SortedDictionary(Of String, Envelope)        ' list of gridsquares and their envelope
+        Dim Land As New Dictionary(Of String, Integer?)        ' list of gridsquares on land. Don't draw GS if not on land
+        Dim Drawn As New Dictionary(Of String, Integer?)       ' list of squares already drawn. Don't draw GS more than once
 
         timer.Start()
+        sql = connect.CreateCommand
+        ' Load list of gridsquare known to be land
+        sql.CommandText = "SELECT * FROM LAND"
+        SQLdr = sql.ExecuteReader
+        While SQLdr.Read
+            Land.Add(SQLdr("gridsquare"), Nothing)
+        End While
+        SQLdr.Close()
+
+        ' make the folder
         Form1.AppendText(Form1.TextBox1, $"Making KML for Grid Square folder ")
         Application.DoEvents()
         kml.WriteLine("<Folder>")
@@ -181,9 +225,9 @@ Module KMLExport
         kml.WriteLine("<visibility>0</visibility>")
         kml.WriteLine("<Style id=""grid""><LabelStyle><color>9Fffff00</color><scale>2</scale></LabelStyle><IconStyle><Icon></Icon></IconStyle><PolyStyle><color>9Fffff00</color><fill>0</fill><outline>1</outline></PolyStyle><LineStyle><color>9Fffff00</color><width>2</width></LineStyle></Style>")
 
-        sql = connect.CreateCommand
         For Each DXCC In DXCClist
-            sql.CommandText = $"SELECT * FROM DXCC WHERE DXCCnum={DXCC}"
+            GridSquares.Clear()
+            sql.CommandText = $"SELECT * FROM `DXCC` WHERE `DXCCnum`={DXCC}"
             SQLdr = sql.ExecuteReader
             SQLdr.Read()
             Dim geometry = Polygon.FromJson(SQLdr("geometry"))          ' get the geometry
@@ -193,50 +237,58 @@ Module KMLExport
             ' Create an envelope which exactly covers all the possible grid squares
             Dim GridExtent As New Envelope(Math.Floor(extent.XMin / Form1.GridSquareX) * Form1.GridSquareX, Math.Floor(extent.YMin / Form1.GridSquareY) * Form1.GridSquareY, Math.Ceiling(extent.XMax / Form1.GridSquareX) * Form1.GridSquareX, Math.Ceiling(extent.YMax / Form1.GridSquareY) * Form1.GridSquareY, SpatialReferences.Wgs84)
             ' test every gridsquare with the grid extent
-            Dim GridSquares As New List(Of (grid As String, square As Envelope))
             Dim X = GridExtent.XMin
             While X < GridExtent.XMax
                 Dim Y = GridExtent.YMin
                 While Y < GridExtent.YMax
-                    Dim GridSq As New Envelope(X, Y, X + Form1.GridSquareX, Y + Form1.GridSquareY, SpatialReferences.Wgs84)
+                    Dim GridSq As New Envelope(X, Y, X + Form1.GridSquareX - eps, Y + Form1.GridSquareY - eps, SpatialReferences.Wgs84)
                     If GridSq.Intersects(geometry) Then
-                        GridSquares.Add((Form1.GridSquare(New MapPoint(X, Y, SpatialReferences.Wgs84)), GridSq))
+                        Dim gs = Form1.GridSquare(New MapPoint(X, Y, SpatialReferences.Wgs84))
+                        If Land.ContainsKey(gs) Then
+                            GridSquares.Add(gs, GridSq)
+                        Else
+                            Ocean += 1      ' gridsquare is not on land
+                        End If
                     End If
                     Y += Form1.GridSquareY
                 End While
                 X += Form1.GridSquareX
             End While
-            Dim sorted = From g In GridSquares Order By g.grid Select g    ' sort the list in gridsquare order
-            GridSquares = sorted.ToList
             kml.WriteLine($"<Folder><name>{KMLescape(Entity)}</name>")
             For Each sq In GridSquares
-                With sq
-                    Dim lb As New MapPoint(.square.Extent.XMin + .square.Width / 2, .square.Extent.YMin + .square.Height / 2, SpatialReferences.Wgs84)    ' label point is center of square
-                    kml.WriteLine($"<Placemark><name>{Form1.GridSquare(lb)}</name><styleUrl>#grid</styleUrl><visibility>0</visibility>")
-                    kml.WriteLine("<MultiGeometry>")
-                    kml.Write($"<Point>")
-                    KMLcoordinates(kml, lb, 1)
-                    kml.WriteLine("</Point>")
-                    kml.WriteLine("<LineString>")
-                    Dim ls As New List(Of MapPoint)
-                    With .square
-                        ls.Add(New MapPoint(.XMin, .YMax, SpatialReferences.Wgs84))
+                With sq.Value
+                    Dim lb As New MapPoint(.XMin + .Width / 2, .YMin + .Height / 2, SpatialReferences.Wgs84)    ' label point is center of square
+                    kml.WriteLine($"<Placemark><name>{sq.Key}</name><styleUrl>#grid</styleUrl><visibility>0</visibility>")
+                    If Not Drawn.ContainsKey(sq.Key) Then
+                        kml.WriteLine("<MultiGeometry>")
+                        kml.Write($"<Point>")
+                        KMLcoordinates(kml, lb, 1)
+                        kml.WriteLine("</Point>")
+                        kml.WriteLine("<LineString>")
+                        Dim ls As New List(Of MapPoint)         ' linestring containing 2,3 or 4 sides
+                        ' Avoid drawing each side of a gridsquare twice. This will reduce a gridsquare from 5 to 4 or 3 points
+                        ' If there is a grid square to the left, don't draw the left boundary
+                        ' If there is a grid square above, don't draw the top boundary
+                        Dim AboveGS = Form1.GridSquare(New MapPoint(.XMin, .YMin + Form1.GridSquareY, SpatialReferences.Wgs84))       ' grid square above
+                        If Not GridSquares.ContainsKey(AboveGS) Then ls.Add(New MapPoint(.XMin, .YMax, SpatialReferences.Wgs84))       ' first point
                         ls.Add(New MapPoint(.XMax, .YMax, SpatialReferences.Wgs84))
                         ls.Add(New MapPoint(.XMax, .YMin, SpatialReferences.Wgs84))
                         ls.Add(New MapPoint(.XMin, .YMin, SpatialReferences.Wgs84))
-                        ls.Add(New MapPoint(.XMin, .YMax, SpatialReferences.Wgs84))
+                        Dim LeftGS = Form1.GridSquare(New MapPoint((.XMin - Form1.GridSquareX) Mod 180, .YMin, SpatialReferences.Wgs84))       ' grid square to the left
+                        If Not GridSquares.ContainsKey(LeftGS) Then ls.Add(New MapPoint(.XMin, .YMax, SpatialReferences.Wgs84))       ' last point
                         KMLcoordinates(kml, ls, 0)
-                    End With
-                    kml.WriteLine($"</LineString>")
-                    kml.WriteLine("</MultiGeometry>")
-                    kml.WriteLine($"</Placemark>")
+                        kml.WriteLine($"</LineString>")
+                        kml.WriteLine("</MultiGeometry>")
+                        Drawn.Add(sq.Key, Nothing)    ' remember we have drawn this square already
+                    End If
                 End With
+                kml.WriteLine($"</Placemark>")
             Next
             kml.WriteLine("</Folder>")
         Next
         kml.WriteLine("</Folder>")
         timer.Stop()
-        Form1.AppendText(Form1.TextBox1, $" [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")
+        Form1.AppendText(Form1.TextBox1, $" {Ocean} GS eliminated, {Drawn.Count:n0} Unique grid squares [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")
     End Sub
 
     Public Sub ZoneFolder(connect As SqliteConnection, kml As StreamWriter)
@@ -340,7 +392,7 @@ Module KMLExport
             kml.WriteLine("</Placemark>")
         Next
         kml.WriteLine("</Folder>")
-        Form1.AppendText(Form1.TextBox1, $" [{Timer.Elapsed.Seconds:f1}s]{vbCrLf}")
+        Form1.AppendText(Form1.TextBox1, $" [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")
     End Sub
 
     Sub IARUFolder(connect As SqliteConnection, kml As StreamWriter)
@@ -360,7 +412,6 @@ Module KMLExport
         While SQLdr.Read
             Dim geom As Polyline = Geometry.FromJson(SQLdr("geometry"))
             kml.WriteLine($"<Placemark><name>Line {SQLdr("line")}</name><visibility>0</visibility><styleUrl>#IARU</styleUrl><LineString><tessellate>1</tessellate>")
-            Dim count As Integer = 0
             For Each prt In geom.Parts
                 KMLcoordinates(kml, prt.Points.ToList, 1)
             Next
@@ -369,7 +420,7 @@ Module KMLExport
         kml.WriteLine("</Folder>")
         ' now do the labels
         kml.WriteLine("<Folder><name>labels</name><visibility>0</visibility>")
-        Dim labels As New List(Of (region As Integer, lat As Double, lon As Double)) From {(1, -70, 15), (2, 20, 0), (3, 145, 5)}      ' positions of the labels for regions
+        Dim labels As New List(Of (region As Integer, lat As Double, lon As Double)) From {(1, 0, -90), (2, 0, 20), (3, 5, 145)}      ' positions of the labels for regions
         For Each label In labels
             kml.Write($"<Placemark><visibility>0</visibility><styleUrl>#IARU</styleUrl><name>IARU {label.region}</name><Point>")
             Dim point = New MapPoint(label.lon, label.lat, SpatialReferences.Wgs84)
@@ -378,7 +429,7 @@ Module KMLExport
         Next
         kml.WriteLine("</Folder>")
         kml.WriteLine("</Folder>")
-        Form1.AppendText(Form1.TextBox1, $" [{Timer.Elapsed.Seconds:f1}s]{vbCrLf}")
+        Form1.AppendText(Form1.TextBox1, $" [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")
     End Sub
     Sub AntarcticFolder(connect As SqliteConnection, kml As StreamWriter)
         ' Create the Antarctic bases folder
@@ -412,7 +463,7 @@ Module KMLExport
             kml.WriteLine($"</Placemark>")
         End While
         kml.WriteLine("</Folder>")
-        Form1.AppendText(Form1.TextBox1, $" [{Timer.Elapsed.Seconds:f1}s]{vbCrLf}")
+        Form1.AppendText(Form1.TextBox1, $" [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")
     End Sub
     Sub EUASborder(kml As StreamWriter)
         ' add the EU/AS Russia border

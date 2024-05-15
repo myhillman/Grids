@@ -154,10 +154,10 @@ Module Reports
                 TotalPolygons += polygons
                 Dim linestrings = folder.Descendants(ns + "LineString").Count
                 TotalLineStrings += linestrings
-                html.WriteLine($"<tr><td>{name}</td><td>{subfolders}</td><td>{placemarks}</td><td>{polygons}</td><td>{linestrings}</td><td>{size}</td></tr>")
+                html.WriteLine($"<tr><td>{name}</td><td>{subfolders:n0}</td><td>{placemarks:n0}</td><td>{polygons:n0}</td><td>{linestrings:n0}</td><td>{size:n0}</td></tr>")
                 lines += 1
             Next
-            html.WriteLine($"<tr><td>{TotalFolders}</td><td>{TotalSubFolders}</td><td>{TotalPlacemarks}</td><td>{TotalPolygons}</td><td>{TotalLineStrings}</td><td>{FolderSize:n0}</td></tr>")
+            html.WriteLine($"<tr><td>{TotalFolders}</td><td>{TotalSubFolders:n0}</td><td>{TotalPlacemarks:n0}</td><td>{TotalPolygons:n0}</td><td>{TotalLineStrings:n0}</td><td>{FolderSize:n0}</td></tr>")
             html.WriteLine("</table>")
             Form1.AppendText(Form1.TextBox1, $"{lines} lines written To html file{vbCrLf}")
         End Using

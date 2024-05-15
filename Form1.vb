@@ -1,5 +1,6 @@
 Imports System.Collections.Immutable
 Imports System.Diagnostics.Contracts
+Imports System.Diagnostics.Metrics
 Imports System.IO
 Imports System.IO.Compression
 Imports System.Net.Http
@@ -39,7 +40,7 @@ There are some additional folders which are closed by default. You must open the
 <tr><th>Folder</th><th>Description</th></tr>
 <tr><td>DXCC Entities</td><td>Polygons displaying the boundaries of all DXCC entities.</td></tr>
 <tr><td>Prefixes</td><td>The ARRL prefix for each entity is displayed in the center of the entity.</td></tr>
-<tr><td>Grid Squares</td><td>The boundary of every grid square that intersects with an entity is displayed. The 4-character grid square code is displayed in the center of the grid square. This folder is searchable, so you can use it to locate any gridsquare.</td></tr>
+<tr><td>Grid Squares</td><td>The boundary of every grid square that intersects with the land of an entity is displayed. The 4-character grid square code is displayed in the center of the grid square. This folder is searchable, so you can use it to locate any grid square.</td></tr>
 <tr><td>CQ Zones</td><td>CQ magazine (now defunct) zones used for Worked All Zones (WAZ) award now administered by ARRL.(Using data created by Francesco Crosilla IV3TMM (SK))</td></tr>
 <tr><td>ITU Zones</td><td>International Telegraphic Union (ITU) zones. (Using data created by Francesco Crosilla IV3TMM (SK))</td></tr>
 <tr><td>IARU regions</td><td>International Amateur Radio Union (IARU) regions. (Using data created by Tim Makins (EI8IC))</td></tr>
@@ -347,7 +348,8 @@ There are some additional folders which are closed by default. You must open the
 
         Dim sql As SqliteCommand, SQLdr As SqliteDataReader, sqlupd As SqliteCommand
         Dim responseString As String = "", geometry As String, dxcc As Integer, query As String, timer As New Stopwatch
-        Dim pb As Multipoint = Nothing
+        Dim pbPoly As Polygon = Nothing
+        Dim pbPolyIsPolygon? As Boolean = Nothing   ' TRUE in bounding box is a polygon
 
         AppendText(TextBox1, $"Creating grids for {country}{vbCrLf}")
 
@@ -385,16 +387,20 @@ There are some additional folders which are closed by default. You must open the
 
                 Dim bbox As String = ""
                 If Not IsDBNull(SQLdr("bbox")) AndAlso SQLdr("bbox") <> "" Then
-                    pb = ParseBox(SQLdr("bbox"), SQLdr("entity") = "Fiji")
+                    pbPoly = ParseBox(SQLdr("bbox"))
                     ' Check if bbox is a rectangle. If so it will have 5 points, and vertical/horizontal sides
-                    If pb IsNot Nothing Then
-                        With pb.Points
-                            If .Count = 5 And
-                                (.Item(0).X = .Item(1).X Or .Item(0).Y = .Item(1).Y) And
-                                 (.Item(1).X = .Item(2).X Or .Item(1).Y = .Item(2).Y) And
-                                  (.Item(2).X = .Item(3).X Or .Item(2).Y = .Item(3).Y) And
-                                   (.Item(3).X = .Item(0).X Or .Item(3).Y = .Item(0).Y) Then
-                                bbox = $"({SQLdr("bbox")})"
+                    If pbPoly IsNot Nothing Then
+                        With pbPoly.Parts(0)
+                            If pbPoly.Parts.Count = 1 And .PointCount = 5 Then
+                                If (.Points(0).X = .Points(1).X Or .Points(0).Y = .Points(1).Y) And
+                                    (.Points(1).X = .Points(2).X Or .Points(1).Y = .Points(2).Y) And
+                                     (.Points(2).X = .Points(3).X Or .Points(2).Y = .Points(3).Y) And
+                                      (.Points(3).X = .Points(0).X Or .Points(3).Y = .Points(0).Y) Then
+                                    bbox = $"({SQLdr("bbox")})"
+                                    pbPolyIsPolygon = False
+                                Else
+                                    pbPolyIsPolygon = True      ' to save having to work it out again for post processing
+                                End If
                             End If
                         End With
                     End If
@@ -444,13 +450,8 @@ There are some additional folders which are closed by default. You must open the
             'Connectivity(plb)
             Dim poly As Polygon = CreatePolygon(plb, country)
 
-            ' Now apply polygon bounding box (if any)
-            If pb IsNot Nothing Then
-                If Not (pb.Points.Count = 5 AndAlso pb.Points(0).Distance(pb.Points(2)) = pb.Points(1).Distance(pb.Points(3))) Then   ' 4 sided object is rectangular if diagonals are equal
-                    Dim pbPoly As New Polygon(pb.Points)
-                    poly = poly.Intersection(pbPoly)
-                End If
-            End If
+
+            If pbPoly IsNot Nothing And pbPolyIsPolygon Then poly = poly.Intersection(pbPoly) ' Now apply polygon bounding box (if any)
 
             geometry = poly.ToJson           ' convert to json
             SQLdr.Close()
@@ -473,28 +474,26 @@ There are some additional folders which are closed by default. You must open the
         End If
     End Sub
 
-    Shared Function ParseBox(bbox As String, antimeridian As Boolean) As Geometry
-        ' Convert a Bounding Box specification to a multipoint
+    Shared Function ParseBox(bbox As String) As Polygon
+        ' Convert a Bounding Box specification to a polygon
         ' It may be a bbox of form "a,b,c,d",  or a polygon of form "poly:a b c d e f g h i j"
-        Dim mpb As New MultipointBuilder(SpatialReferences.Wgs84), result As Multipoint = Nothing
+        Dim mpb As New PolygonBuilder(SpatialReferences.Wgs84), result As Polygon = Nothing
 
         If IsDBNullorEmpty(bbox) Then Return result        ' no bounds
         Dim groups = bbox.Split(",")
         If groups.Length = 4 Then        ' could be a box
-            If Not antimeridian Then
-                If (CDbl(groups(0)) > CDbl(groups(2)) Or CDbl(groups(1)) > CDbl(groups(3))) Then
-                    MsgBox($"Bounding box {bbox} is malformed", vbCritical + vbOKOnly, "Bad bounding box")
-                    Return result
-                End If
-            End If
+            'If (CDbl(groups(0)) > CDbl(groups(2)) Or CDbl(groups(1)) > CDbl(groups(3))) Then
+            '    MsgBox($"Bounding box {bbox} is malformed", vbCritical + vbOKOnly, "Bad bounding box")
+            '    Return result
+            'End If
             If Not (Between(CDbl(groups(0)), -90, 90) And Between(CDbl(groups(1)), -180, 180) And Between(CDbl(groups(2)), -90, 90) And Between(CDbl(groups(3)), -180, 180)) Then
                 MsgBox($"Bad lat/lon in bounding box {bbox}", vbCritical + vbOKOnly, "Bad coordinate")
             End If
-            mpb.Points.Add(New MapPoint(CDbl(groups(1)), CDbl(groups(0))))
-            mpb.Points.Add(New MapPoint(CDbl(groups(1)), CDbl(groups(2))))
-            mpb.Points.Add(New MapPoint(CDbl(groups(3)), CDbl(groups(2))))
-            mpb.Points.Add(New MapPoint(CDbl(groups(3)), CDbl(groups(0))))
-            mpb.Points.Add(New MapPoint(CDbl(groups(1)), CDbl(groups(0))))
+            mpb.AddPoint(New MapPoint(CDbl(groups(1)), CDbl(groups(0))))
+            mpb.AddPoint(New MapPoint(CDbl(groups(1)), CDbl(groups(2))))
+            mpb.AddPoint(New MapPoint(CDbl(groups(3)), CDbl(groups(2))))
+            mpb.AddPoint(New MapPoint(CDbl(groups(3)), CDbl(groups(0))))
+            mpb.AddPoint(New MapPoint(CDbl(groups(1)), CDbl(groups(0))))
             result = mpb.ToGeometry
         Else        ' might be a polygon
             Dim matches = Regex.Match(bbox, "^poly:""([\d\.\- ]+)""$")
@@ -508,12 +507,13 @@ There are some additional folders which are closed by default. You must open the
                     If Not (Between(X, -180, 180) And Between(Y, -90, 90)) Then
                         MsgBox($"Bad coordinate lon={X},lat={Y}", vbCritical + vbOKOnly, "Bad coordinate")
                     End If
-                    mpb.Points.Add(New MapPoint(CDbl(X), CDbl(Y)))         ' add xy pair
+                    mpb.AddPoint(New MapPoint(CDbl(X), CDbl(Y)))         ' add xy pair
                 Next
                 result = mpb.ToGeometry
             End If
         End If
-        Return result
+        'result = NormalizeCentralMeridian(result)
+        Return result       ' handle the central meridian
     End Function
 
     Shared Function Between(value As Double, low As Double, high As Double) As Boolean
@@ -545,7 +545,7 @@ There are some additional folders which are closed by default. You must open the
         Debug.Assert(Not (plb.IsEmpty Or plb.Parts.Count = 0), $"Empty PolyLineBuilder")
         Debug.Assert(Not String.IsNullOrEmpty(country), "Bad country")
 
-        ' dump out ways fro debug purposes
+        ' dump out ways for debug purposes
         'Using dump As New StreamWriter("PLB dump.txt", False)
         '    For Each prt In plb.Parts
         '        If Not prt.IsEmpty Then
@@ -659,7 +659,7 @@ There are some additional folders which are closed by default. You must open the
 
         Dim unclosed = 0
         For PartIndex As Integer = 0 To plb.Parts.Count - 1
-            If Not CoIncident(plb.Parts(PartIndex).StartPoint, plb.Parts(PartIndex).EndPoint) Then
+            If Not CoIncident(plb.Parts(PartIndex).StartPoint, plb.Parts(PartIndex).Points.Last) Then
                 unclosed += 1
                 plb.Parts(PartIndex).AddPoint(plb.Parts(PartIndex).StartPoint)        ' close the open polygon
             End If
@@ -668,11 +668,34 @@ There are some additional folders which are closed by default. You must open the
         AppendText(TextBox1, $"{unclosed} unclosed polygons closed{vbCrLf}")
 
         Dim poly = New Polygon(plb.Parts)       ' make the polygon
+        'For i = 0 To poly.Parts.Count - 1
+        '    AppendText(TextBox1, $"{i} area {PolygonArea(poly.Parts(i))}{vbCrLf}")
+        'Next
         poly = poly.Simplify    ' make sure all polygons have correct winding direction
+
+        ' Put a buffer around specific DXCC. Size is specified in nautical miles. Makes islands with distinct boundaries look more like the larger countries
+        Dim CoastalLimit As New Dictionary(Of String, Integer) From {
+            {"Andaman & Nicobar Is", 2},
+            {"Corsica", 4},
+            {"Franz Josef Land", 12},
+            {"Guernsey", 1},
+            {"Jersey", 1},
+            {"Johnston Is", 2},
+            {"New Zealand Subantarctic Islands", 2},
+            {"Revillagigedo", 4},
+            {"Sardinia", 4},
+            {"South Orkney Is", 2},
+            {"South Shetland Is", 2},
+            {"St. Peter & St. Paul Rocks", 4}
+            }
+        If CoastalLimit.ContainsKey(country) Then
+            poly = poly.BufferGeodetic(CoastalLimit(country), LinearUnits.NauticalMiles)    ' add limit in nautical miles.
+        End If
 
         ' We frequently see a situation where we have an outer ring inside another outer ring. The outer ring is usually the administrative boundary
         ' whilst the inner ring is the land boundary. In this case we remove the inner ring.
-        Dim OuterRemoval As New List(Of String) From {"Austral Is", "Aves Is", "Martinique", "Bonaire", "Christmas Is", "Clipperton Is", "Lakshadweep Is", "Sable Is", "Scarborough Reef", "South Georgia Is", "St Paul Is", "St. Pierre & Miquelon", "Taiwan", "Marquesas Is", "Wake Is", "Willis Is"}     ' countires which need outer ring removed
+        Dim OuterRemoval As New List(Of String) From {"Agalega & St Brandon", "Austral Is", "Aves Is", "Martinique", "Bonaire", "Christmas Is", "Clipperton Is", "Lakshadweep Is",
+            "Sable Is", "Scarborough Reef", "South Georgia Is", "St Paul Is", "St. Pierre & Miquelon", "Taiwan", "Marquesas Is", "Wake Is", "Willis Is"}     ' countires which need outer ring removed
         If OuterRemoval.Contains(country) Then
             '**********************************************
             ' Make a separate polygon for every part so we can use spatial comparisons
@@ -859,7 +882,7 @@ There are some additional folders which are closed by default. You must open the
             connect.Open()
             ' Create list of DXCC to convert to KML (all)
             sql = connect.CreateCommand
-            sql.CommandText = "Select * FROM DXCC WHERE Deleted=0 And geometry Is Not NULL ORDER BY Entity"     ' fetch all geometry
+            sql.CommandText = "Select * FROM `DXCC` WHERE `Deleted`=0 And `geometry` Is Not NULL ORDER BY `Entity`"     ' fetch all geometry
             SQLdr = sql.ExecuteReader
             DXCClist.Clear()
             BoundingBoxes.Clear()
@@ -868,8 +891,11 @@ There are some additional folders which are closed by default. You must open the
                 DXCClist.Add(SQLdr("DXCCnum"))
                 Dim BoundingBox = SQLdr("bbox")
                 If Not IsDBNullorEmpty(BoundingBox) Then
-                    Dim antimeridian As Boolean = SQLdr("entity") = "Fiji"      ' does this bbox cross the antimeridian?
-                    BoundingBoxes.Add((name:=SQLdr("Entity"), box:=ParseBox(BoundingBox, antimeridian).ToJson))
+                    Dim box = ParseBox(BoundingBox)
+                    If box.Parts.Count > 1 Then
+                        AppendText(TextBox1, $"{SQLdr("Entity")} crosses anti-meridian{vbCrLf}")
+                    End If
+                    BoundingBoxes.Add((name:=SQLdr("Entity"), box:=box.ToJson))
                 End If
             End While
             SQLdr.Close()
@@ -934,7 +960,6 @@ There are some additional folders which are closed by default. You must open the
         End If
         System.Windows.Forms.Application.DoEvents()
     End Sub
-
     Private Async Sub MakeShapefileToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles MakeShapefileToolStripMenuItem.Click
         Dim Shapefile = $"{Application.StartupPath}\DXCC.shp"
         Dim sql As SqliteCommand, SQLdr As SqliteDataReader, countries As Integer = 0
@@ -956,7 +981,7 @@ There are some additional folders which are closed by default. You must open the
         Using connect As New SqliteConnection(DXCC_DATA)
             connect.Open()
             sql = connect.CreateCommand
-            sql.CommandText = "SELECT * FROM DXCC WHERE Deleted=0 AND geometry IS NOT NULL ORDER BY Entity"     ' fetch all geometry
+            sql.CommandText = "SELECT * FROM `DXCC` WHERE `Deleted`=0 AND `geometry` IS NOT NULL ORDER BY `Entity`"     ' fetch all geometry
             SQLdr = sql.ExecuteReader
             While SQLdr.Read
                 countries += 1
@@ -983,7 +1008,7 @@ There are some additional folders which are closed by default. You must open the
 
     Private Sub EntityReportToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles EntityReportToolStripMenuItem.Click
         ' Create list of entities and state of geometry
-        EntityReport
+        EntityReport()
     End Sub
 
     Shared Function Hyperlink(links As String) As String
@@ -1001,13 +1026,15 @@ There are some additional folders which are closed by default. You must open the
     End Function
 
     Shared Function PolygonArea(polygon As ReadOnlyPart) As Double
-        ' Calculate the area of a polygon using the 'Shoelace' or Gauss's formula
+        ' Calculate the area, in square meters, of a polygon using the 'Shoelace' or Gauss's formula
         ' https://en.wikipedia.org/wiki/Shoelace_formula
         ' if result < 0 then CW winding (outer), else CCW (inner)
         Contract.Requires(polygon IsNot Nothing AndAlso Not polygon.IsEmpty, "Illegal polygon")
         Dim result As Double = 0
         If polygon.Count > 2 Then           ' ignore degenerate polygon
-            For Each s In polygon
+            Dim polyMeters As New Polygon(polygon)          ' Convert part to polygon
+            polyMeters = polyMeters.Project(SpatialReferences.WebMercator)       ' convert polygon to linear datum in meters
+            For Each s In polyMeters.Parts(0)       ' apply shoelace formula
                 result += s.StartPoint.X * s.EndPoint.Y - s.EndPoint.X * s.StartPoint.Y
             Next
         End If
@@ -1270,7 +1297,7 @@ There are some additional folders which are closed by default. You must open the
         Dim testcases As New List(Of (input As String, result As Boolean)) From {{("-15,-171,-14,-167", True)}, {("-53,165,-48,179.9", True)},
             {("-53,165,-48", False)}, {("poly:""-12 -160 -12 -135 -27 -135 -17 -160 -12 -160""", True)}}
         For Each testcase In testcases
-            Dim result = ParseBox(testcase.input, False) IsNot Nothing
+            Dim result = ParseBox(testcase.input) IsNot Nothing
             AppendText(TextBox1, $"test case {testcase.input}, Expected result {testcase.result}, Passed {testcase.result = result}{vbCrLf}")
         Next
     End Sub
@@ -1289,11 +1316,124 @@ There are some additional folders which are closed by default. You must open the
 
     Private Sub GeometrySizeTableToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles GeometrySizeTableToolStripMenuItem.Click
         ' Create list of geometry sizes
-        GeometrySizeTable
+        GeometrySizeTable()
     End Sub
 
     Private Sub KMLFileSizeToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles KMLFileSizeToolStripMenuItem.Click
-        KMLFileSize
+        KMLFileSize()
+    End Sub
+
+    Private Async Sub ImportLandSquareListToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles ImportLandSquareListToolStripMenuItem.Click
+        Await LandSquareList()
+    End Sub
+    Async Function LandSquareList() As Task
+        ' Import a list of squares that are land
+        Const LandDataURL = "https://osmdata.openstreetmap.de/download/land-polygons-split-4326.zip"    ' remote source of land data
+        Const LandDataFile = "D:\GIS Data\Land Polygons\split\land_polygons.shp"                        ' local copy of land data
+        Const LandDataZip = "D:\GIS Data\Land Polygons\split\land-polygons-split-4326.zip"                        ' local copy of land data
+        Dim myQueryFilter As New QueryParameters, count As Integer = 0, responseString As String
+        Dim httpResult As System.Net.Http.HttpResponseMessage, timer As New Stopwatch
+
+        ' Check the date on the latest download file
+        Using httpClient As New System.Net.Http.HttpClient()
+            httpClient.Timeout = New TimeSpan(0, 10, 0)        ' 10 min timeout
+            Try
+                Dim request = New HttpRequestMessage(HttpMethod.Head, LandDataURL)      ' request for header only
+                httpResult = Await httpClient.SendAsync(request)
+                httpResult.EnsureSuccessStatusCode()
+                Dim LandDataURLDate = httpResult.Content.Headers.LastModified.Value.UtcDateTime
+                Dim LandDataFileDate = File.GetLastWriteTimeUtc(LandDataZip)
+                Dim DateStatus As String
+                If LandDataURLDate > LandDataFileDate Then DateStatus = "Land data is Out of Date" Else DateStatus = "Land data is Current"
+                If MsgBox($"The OSM land data is dated {LandDataURLDate.ToUniversalTime:yyyy-MM-dd hh:mm}{vbCrLf}The local copy is dated {LandDataFileDate.ToUniversalTime:yyyy-MM-dd hh:mm}{vbCrLf}{vbCrLf}Do you wish to update the data ?", vbInformation + vbYesNo, DateStatus) = vbYes Then
+
+                    ' get data from OSM
+                    timer.Start()
+                    Try
+                        AppendText(TextBox1, "Fetching land data from OSM ")
+                        httpResult = Await httpClient.GetAsync(LandDataURL)
+                        httpResult.EnsureSuccessStatusCode()
+                        Dim zipdata = Await httpResult.Content.ReadAsByteArrayAsync()
+                        AppendText(TextBox1, $"{zipdata.Length} bytes retrieved [{timer.ElapsedMilliseconds / 1000:f1}s]{vbCrLf}")
+                        File.WriteAllBytes(LandDataZip, zipdata)
+                        ' Now unzip downloaded file
+                        Using archive = ZipFile.OpenRead(LandDataZip)
+                            Dim targetDirectory = Path.GetDirectoryName(LandDataZip)
+                            For Each entry In archive.Entries
+                                entry.ExtractToFile($"{targetDirectory}\{entry.Name}", True)
+                            Next
+                        End Using
+                    Catch ex As HttpRequestException
+                        MsgBox($"{ex.Message}{vbCrLf}", vbCritical + vbOKOnly, "OSM request error")
+                    End Try
+                End If
+            Catch ex As HttpRequestException
+                MsgBox($"{ex.Message}{vbCrLf}", vbCritical + vbOKOnly, "OSM request error")
+            End Try
+        End Using
+
+        ' Convert the OSM data into a list of grid squares that contain land
+        Dim Features = Await ShapefileFeatureTable.OpenAsync(LandDataFile)
+        Using connect As New SqliteConnection(Form1.DXCC_DATA)
+            Dim sql As SqliteCommand, sqlDR As SqliteDataReader
+            connect.Open()
+            sql = connect.CreateCommand
+            sql.CommandText = "SELECT COUNT(*) as Count FROM LAND"
+            sqlDR = sql.ExecuteReader()
+            sqlDR.Read()
+            Dim Before As Integer = sqlDR("Count")
+            sqlDR.Close()
+            sql.CommandText = "BEGIN TRANSACTION"
+            sql.ExecuteNonQuery()
+            sql.CommandText = "DELETE FROM LAND"
+            sql.ExecuteNonQuery()
+            With myQueryFilter
+                .OutSpatialReference = SpatialReferences.Wgs84     ' results in WGS84
+                .ReturnGeometry = True
+            End With
+            Dim land = Await Features.QueryFeaturesAsync(myQueryFilter).ConfigureAwait(False)           ' retrun all geometry
+            InitializeProgressBar(ProgressBar1, 0, 0, land.Count, 20)
+            Dim f = land.Count
+            For Each feature In land
+                Dim pnt = New MapPoint(CDbl(feature.Attributes("x")), CDbl(feature.Attributes("y")), SpatialReferences.Wgs84)
+                sql.CommandText = $"INSERT OR REPLACE INTO LAND (gridsquare) VALUES ('{GridSquare(pnt)}')"
+                sql.ExecuteNonQuery()
+                UpdateProgressBar(ProgressBar1, count)
+                count += 1
+            Next
+            sql.CommandText = "COMMIT"
+            sql.ExecuteNonQuery()
+            sql.CommandText = "SELECT COUNT(*) as Count FROM LAND"
+            sqlDR = sql.ExecuteReader()
+            sqlDR.Read()
+            Dim After As Integer = sqlDR("Count")
+            sqlDR.Close()
+            AppendText(TextBox1, $"{count} features processed. Grid squares before={Before}, after={After}{vbCrLf}")
+        End Using
+    End Function
+    Public Delegate Sub InitializeProgressCallback(pb As System.Windows.Forms.ProgressBar, min As Integer, value As Integer, max As Integer, stp As Integer)
+    Public Sub InitializeProgressBar(pb As System.Windows.Forms.ProgressBar, min As Integer, value As Integer, max As Integer, stp As Integer)
+        If pb.InvokeRequired Then
+            pb.Invoke(New InitializeProgressCallback(AddressOf InitializeProgressBar), New Object() {pb, min, value, max, stp})
+        Else
+            With pb
+                .Minimum = min
+                .Value = value
+                .Maximum = max
+                .Step = stp
+            End With
+        End If
+        Application.DoEvents()
+    End Sub
+
+    Public Delegate Sub SetProgressCallback(pb As System.Windows.Forms.ProgressBar, value As Integer)
+    Public Sub UpdateProgressBar(pb As System.Windows.Forms.ProgressBar, value As Integer)
+        If pb.InvokeRequired Then
+            pb.Invoke(New SetProgressCallback(AddressOf UpdateProgressBar), New Object() {pb, value})
+        Else
+            pb.Value = value
+        End If
+        Application.DoEvents()
     End Sub
 End Class
 

@@ -3,10 +3,12 @@ Imports System.Net.Http
 Imports System.Text.Json.Nodes
 Imports System.Text.RegularExpressions
 Imports System.Web
+Imports System.Windows.Forms.VisualStyles.VisualStyleElement
 Imports System.Xml
 Imports System.Xml.XPath
 Imports Esri.ArcGISRuntime.Data
 Imports Esri.ArcGISRuntime.Geometry
+Imports Grids.Form1
 Imports HtmlAgilityPack
 Imports Microsoft.Data.Sqlite
 Imports Microsoft.VisualBasic.FileIO
@@ -49,18 +51,15 @@ Module Import
 
         Dim doc = XDocument.Load($"{Application.StartupPath}\border.kml")    ' read the XML
         Dim ns = doc.Root.Name.Namespace      ' get namespace name so we can qualify everything
-        Dim nsmgr As New XmlNamespaceManager(New NameTable)
-        nsmgr.AddNamespace("x", ns.NamespaceName)
-        Dim linestrings = doc.XPathSelectElements("//x:LineString/x:coordinates", nsmgr)       ' find all the linestrings
+        Dim linestrings = doc.Descendants(ns + "LineString")       ' find all the linestrings
         Form1.AppendText(Form1.TextBox1, $"{linestrings.Count} linestrings loaded{vbCrLf}")
-        For Each coordinates In linestrings
+        For Each coordinates In linestrings.Descendants(ns + "coordinates")
             Dim coords As List(Of String), linestr As New Part(SpatialReferences.Wgs84)
             Dim value = coordinates.Value
             value = Regex.Replace(value, "[^0-9\-\., ]", "")     ' remove noise characters
             value = Trim(value)
             coords = Split(value, " ").ToList   ' bust into coordinate pairs
             linestr.Clear()
-
             For Each coord In coords
                 Dim points = Split(coord, ",")
                 linestr.AddPoint(points(0), points(1))
@@ -271,27 +270,36 @@ Module Import
         ' Get the country boundary for Antarctica. No useful one in OSM
         Dim qp As New QueryParameters
         Dim Features = Await ShapefileFeatureTable.OpenAsync("D:\GIS Data\World countries generalized\World_Countries_Generalized.shp")
-        With qp
-            .WhereClause = "COUNTRY='Antarctica'"            ' get all features
-            .ReturnGeometry = True
-            .OutSpatialReference = SpatialReferences.Wgs84
-        End With
-        Dim fqr = Await Features.QueryFeaturesAsync(qp)
-        Dim plb As New PolygonBuilder(SpatialReferences.Wgs84)
-        For Each f In fqr
-            Dim geom As Polygon = f.Geometry
-            For Each p In geom.Parts
-                plb.AddPart(p)
-            Next
-        Next
-            Dim poly As New Polygon(plb.Parts)
-        Dim polyGeneralized = Form1.GeneralizeByPart(poly)   ' reduce it in size
-        Dim geometry = polyGeneralized.ToJson           ' convert to json
-        ' Save in database
         Using connect As New SqliteConnection(Form1.DXCC_DATA)
-            Dim sql As SqliteCommand
+            Dim sql As SqliteCommand, sqlDR As SqliteDataReader
             connect.Open()
             sql = connect.CreateCommand
+            ' get the bounding polygon
+            sql.CommandText = "SELECT * FROM DXCC WHERE Entity='Antarctica'"
+            sqlDR = sql.ExecuteReader
+            sqlDR.Read()
+            Dim Antarctica As Polygon = Form1.ParseBox(sqlDR("bbox"))
+            sqlDR.Close()
+            With qp
+                .WhereClause = "COUNTRY='Antarctica'"            ' get all features
+                .Geometry = Antarctica
+                .ReturnGeometry = True
+                .OutSpatialReference = SpatialReferences.Wgs84
+                '.SpatialRelationship = SpatialRelationship.Within
+            End With
+            Dim fqr = Await Features.QueryFeaturesAsync(qp)
+            Dim plb As New PolygonBuilder(SpatialReferences.Wgs84)
+            For Each f In fqr
+                Dim geom As Polygon = f.Geometry
+                For Each p In geom.Parts
+                    plb.AddPart(p)
+                Next
+            Next
+            Dim poly As New Polygon(plb.Parts)
+            Dim polyGeneralized = Form1.GeneralizeByPart(poly)   ' reduce it in size
+            Dim geometry = polyGeneralized.ToJson           ' convert to json
+            ' Save in database
+
             sql.CommandText = $"UPDATE DXCC SET geometry='{geometry}' WHERE Entity='Antarctica'"
             sql.ExecuteNonQuery()
         End Using
@@ -546,7 +554,9 @@ Module Import
                 Dim s = Split(polygon, " ")
                 For Each coord In s
                     Dim c = Split(coord, ",")
-                    polyPoints.Add($"{CDbl(c(1)):f1} {CDbl(c(0)):f1}")
+                    Dim X = CDbl(c(1)) Mod 90
+                    Dim Y = NormalizeLongitude(c(0))       ' normalize longitude
+                    polyPoints.Add($"{X:f1} {Y:f1}")
                 Next
                 result = $"poly:""{Strings.Join(polyPoints.ToArray, " ")}"""
                 Clipboard.SetText(result)           ' copy to clipboard
@@ -554,4 +564,9 @@ Module Import
             End If
         End With
     End Sub
+    Function NormalizeLongitude(longitude As Double) As Double
+        ' Normalize a longitude to between -180 and +180
+        Return (longitude Mod 360 + 540) Mod 360 - 180        ' normalize longitude
+    End Function
+
 End Module
