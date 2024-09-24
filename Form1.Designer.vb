@@ -54,16 +54,20 @@ Partial Class Form1
         IOTACheckToolStripMenuItem = New ToolStripMenuItem()
         InnerRingsToolStripMenuItem = New ToolStripMenuItem()
         AdjacentColorCheckToolStripMenuItem = New ToolStripMenuItem()
+        FindIARURegionToolStripMenuItem = New ToolStripMenuItem()
         ReportsToolStripMenuItem = New ToolStripMenuItem()
         KMLFileSizeToolStripMenuItem = New ToolStripMenuItem()
         EntityReportToolStripMenuItem = New ToolStripMenuItem()
         GeometrySizeTableToolStripMenuItem = New ToolStripMenuItem()
         TestToolStripMenuItem = New ToolStripMenuItem()
         ParseBoxToolStripMenuItem = New ToolStripMenuItem()
+        NormalizeCentralMeridianToolStripMenuItem = New ToolStripMenuItem()
+        KMLArcGISToolStripMenuItem = New ToolStripMenuItem()
         TextBox1 = New TextBox()
         ProgressBar1 = New ProgressBar()
         DummyToolStripMenuItem = New ToolStripMenuItem()
         OpenFileDialog1 = New OpenFileDialog()
+        MakeHamclockZonesToolStripMenuItem = New ToolStripMenuItem()
         MenuStrip1.SuspendLayout()
         SuspendLayout()
         ' 
@@ -225,7 +229,7 @@ Partial Class Form1
         ' 
         ' ChecksToolStripMenuItem
         ' 
-        ChecksToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {CheckISO3166ReferencesToolStripMenuItem, CountryCollisionsToolStripMenuItem, RemoveEmptyGeometryToolStripMenuItem, IOTACheckToolStripMenuItem, InnerRingsToolStripMenuItem, AdjacentColorCheckToolStripMenuItem})
+        ChecksToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {CheckISO3166ReferencesToolStripMenuItem, CountryCollisionsToolStripMenuItem, RemoveEmptyGeometryToolStripMenuItem, IOTACheckToolStripMenuItem, InnerRingsToolStripMenuItem, AdjacentColorCheckToolStripMenuItem, FindIARURegionToolStripMenuItem})
         ChecksToolStripMenuItem.Name = "ChecksToolStripMenuItem"
         ChecksToolStripMenuItem.Size = New Size(57, 20)
         ChecksToolStripMenuItem.Text = "Checks"
@@ -266,6 +270,12 @@ Partial Class Form1
         AdjacentColorCheckToolStripMenuItem.Size = New Size(209, 22)
         AdjacentColorCheckToolStripMenuItem.Text = "Adjacent color check"
         ' 
+        ' FindIARURegionToolStripMenuItem
+        ' 
+        FindIARURegionToolStripMenuItem.Name = "FindIARURegionToolStripMenuItem"
+        FindIARURegionToolStripMenuItem.Size = New Size(209, 22)
+        FindIARURegionToolStripMenuItem.Text = "Find IARU region"
+        ' 
         ' ReportsToolStripMenuItem
         ' 
         ReportsToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {KMLFileSizeToolStripMenuItem, EntityReportToolStripMenuItem, GeometrySizeTableToolStripMenuItem})
@@ -293,7 +303,7 @@ Partial Class Form1
         ' 
         ' TestToolStripMenuItem
         ' 
-        TestToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {ParseBoxToolStripMenuItem})
+        TestToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {ParseBoxToolStripMenuItem, NormalizeCentralMeridianToolStripMenuItem, KMLArcGISToolStripMenuItem, MakeHamclockZonesToolStripMenuItem})
         TestToolStripMenuItem.Name = "TestToolStripMenuItem"
         TestToolStripMenuItem.Size = New Size(39, 20)
         TestToolStripMenuItem.Text = "Test"
@@ -301,8 +311,20 @@ Partial Class Form1
         ' ParseBoxToolStripMenuItem
         ' 
         ParseBoxToolStripMenuItem.Name = "ParseBoxToolStripMenuItem"
-        ParseBoxToolStripMenuItem.Size = New Size(122, 22)
+        ParseBoxToolStripMenuItem.Size = New Size(213, 22)
         ParseBoxToolStripMenuItem.Text = "ParseBox"
+        ' 
+        ' NormalizeCentralMeridianToolStripMenuItem
+        ' 
+        NormalizeCentralMeridianToolStripMenuItem.Name = "NormalizeCentralMeridianToolStripMenuItem"
+        NormalizeCentralMeridianToolStripMenuItem.Size = New Size(213, 22)
+        NormalizeCentralMeridianToolStripMenuItem.Text = "NormalizeCentralMeridian"
+        ' 
+        ' KMLArcGISToolStripMenuItem
+        ' 
+        KMLArcGISToolStripMenuItem.Name = "KMLArcGISToolStripMenuItem"
+        KMLArcGISToolStripMenuItem.Size = New Size(213, 22)
+        KMLArcGISToolStripMenuItem.Text = "KML ArcGIS"
         ' 
         ' TextBox1
         ' 
@@ -329,6 +351,12 @@ Partial Class Form1
         ' OpenFileDialog1
         ' 
         OpenFileDialog1.FileName = "OpenFileDialog1"
+        ' 
+        ' MakeHamclockZonesToolStripMenuItem
+        ' 
+        MakeHamclockZonesToolStripMenuItem.Name = "MakeHamclockZonesToolStripMenuItem"
+        MakeHamclockZonesToolStripMenuItem.Size = New Size(213, 22)
+        MakeHamclockZonesToolStripMenuItem.Text = "Make Hamclock zones"
         ' 
         ' Form1
         ' 
@@ -389,5 +417,9 @@ Partial Class Form1
     Friend WithEvents ReportsToolStripMenuItem As ToolStripMenuItem
     Friend WithEvents KMLFileSizeToolStripMenuItem As ToolStripMenuItem
     Friend WithEvents ImportLandSquareListToolStripMenuItem As ToolStripMenuItem
+    Friend WithEvents NormalizeCentralMeridianToolStripMenuItem As ToolStripMenuItem
+    Friend WithEvents KMLArcGISToolStripMenuItem As ToolStripMenuItem
+    Friend WithEvents FindIARURegionToolStripMenuItem As ToolStripMenuItem
+    Friend WithEvents MakeHamclockZonesToolStripMenuItem As ToolStripMenuItem
 
 End Class

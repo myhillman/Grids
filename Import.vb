@@ -1,4 +1,5 @@
-﻿Imports System.IO
+﻿Imports System.Collections.Immutable
+Imports System.IO
 Imports System.Net.Http
 Imports System.Text.Json.Nodes
 Imports System.Text.RegularExpressions
@@ -94,6 +95,8 @@ Module Import
         Using connect As New SqliteConnection(Form1.DXCC_DATA)
             connect.Open()
             sql = connect.CreateCommand
+            sql.CommandText = $"BEGIN TRANSACTION"      ' for speed
+            sql.ExecuteNonQuery()
             ' Delete existing data
             sql.CommandText = $"DELETE FROM ZoneLines"
             sql.ExecuteNonQuery()
@@ -194,6 +197,8 @@ Module Import
                 sql.CommandText = $"INSERT INTO ZoneLabels (Type,zone,geometry) VALUES ('ITU',{Zone},'{pnt.ToJson}')"
                 sql.ExecuteNonQuery()
             Next
+            sql.CommandText = $"COMMIT"
+            sql.ExecuteNonQuery()
         End Using
         Form1.AppendText(Form1.TextBox1, $"Done{vbCrLf}")
     End Sub
@@ -225,8 +230,9 @@ Module Import
     End Function
 
     Async Function ImportIARURegions() As Task
-        ' Import a timezone database
-        Dim myQueryFilter As New QueryParameters, sql As SqliteCommand, count As Integer = 0
+        ' Import IARU regions. Data from Tim Makins (EI8IC)
+        Dim myQueryFilter As New QueryParameters, sql As SqliteCommand, count As Integer = 0, GeneralizeDistance As Integer = 1000
+        Dim lines As New PolylineBuilder(SpatialReferences.Wgs84), OriginalCount As Integer = 0, DensifyCount As Integer = 0, GeneralizeCount As Integer = 0
 
         Dim Features = Await ShapefileFeatureTable.OpenAsync("D:\GIS Data\IARU\IARU Region Lines_50m_No_Edges_Simplified.shp")
         With myQueryFilter
@@ -240,29 +246,35 @@ Module Import
             sql = connect.CreateCommand
             sql.CommandText = "DELETE FROM IARU"       ' remove existing data
             sql.ExecuteNonQuery()
-            Dim GeneralizeAngle As Double = Form1.RadtoDeg(Math.Asin(20 * 1000 / Form1.EARTH_RADIUS))   ' angle for Generalize
+
             For Each Reg In Regions
-                count += 1
                 Dim geom As Polyline = Reg.Geometry
-                Dim OriginalCount As Integer = 0
-                Dim DensifyCount As Integer = 0
-                Dim GeneralizeCount As Integer = 0
                 For Each line In geom.Parts
-                    OriginalCount += line.PointCount
+                    geom = NormalizeCentralMeridian(geom)         ' normalize in case line crosses anti-meridian (one does)
+                    lines.AddPart(line)
                 Next
-                geom = geom.Densify(2)    ' make sure there is a point every 2 degrees
-                For Each line In geom.Parts
-                    DensifyCount += line.PointCount
-                Next
-                geom = GeometryEngine.Generalize(geom, GeneralizeAngle, True)   ' Generalize a polygon to reduce it in size
-                For Each line In geom.Parts
-                    GeneralizeCount += line.PointCount
-                Next
-                If geom.IsEmpty Then geom = Reg.Geometry
-                If geom.LengthGeodetic > 0 Then sql.CommandText = $"INSERT INTO IARU (line,geometry) VALUES ({count},'{geom.ToJson}')"
-                sql.ExecuteNonQuery()
-                Form1.AppendText(Form1.TextBox1, $"{count} Parts {geom.Parts.Count}, Original {OriginalCount}, Densify {DensifyCount}, Generalize {GeneralizeCount}{vbCrLf}")
             Next
+            ' Now add all lines to database
+            Dim geometry = lines.ToGeometry
+            For Each prt In geometry.Parts
+                OriginalCount += prt.Points.Count
+            Next
+            geometry = geometry.Densify(5)
+            For Each prt In geometry.Parts
+                DensifyCount += prt.Points.Count
+            Next
+            'Dim GeneralizeAngle As Double = Form1.RadtoDeg(Math.Asin(GeneralizeDistance / Form1.EARTH_RADIUS))   ' angle for Generalize
+            'geometry = geometry.Generalize(GeneralizeAngle, True)
+            'For Each prt In geometry.Parts
+            '    GeneralizeCount += prt.Points.Count
+            'Next
+            For Each line In geometry.Parts
+                count += 1
+                Dim geo = New Polyline(line.Points).ToJson
+                sql.CommandText = $"INSERT INTO IARU (line,geometry) VALUES ({count},'{geo}')"
+                sql.ExecuteNonQuery()
+            Next
+            Form1.AppendText(Form1.TextBox1, $"Linestrings {geometry.Parts.Count}, Original {OriginalCount}, Densify {DensifyCount}, Generalize {GeneralizeCount}{vbCrLf}")
         End Using
     End Function
 
@@ -285,7 +297,7 @@ Module Import
                 .Geometry = Antarctica
                 .ReturnGeometry = True
                 .OutSpatialReference = SpatialReferences.Wgs84
-                '.SpatialRelationship = SpatialRelationship.Within
+                .SpatialRelationship = SpatialRelationship.Intersects
             End With
             Dim fqr = Await Features.QueryFeaturesAsync(qp)
             Dim plb As New PolygonBuilder(SpatialReferences.Wgs84)
@@ -296,6 +308,7 @@ Module Import
                 Next
             Next
             Dim poly As New Polygon(plb.Parts)
+            'poly = poly.Intersection(Antarctica)        ' remove unwanted bits
             Dim polyGeneralized = Form1.GeneralizeByPart(poly)   ' reduce it in size
             Dim geometry = polyGeneralized.ToJson           ' convert to json
             ' Save in database
@@ -424,7 +437,7 @@ Module Import
                     sql.ExecuteNonQuery()
                 Next
                 sql.CommandText = "COMMIT"
-                sql.ExecuteNonQuery()                             ' delete existing data
+                sql.ExecuteNonQuery()
             End Using
         End If
     End Function
@@ -475,7 +488,7 @@ Module Import
                     sql.ExecuteNonQuery()
                 Next
                 sql.CommandText = "COMMIT"
-                sql.ExecuteNonQuery()                             ' delete existing data
+                sql.ExecuteNonQuery()
             End Using
         End If
     End Function
@@ -525,7 +538,7 @@ Module Import
                     sql.ExecuteNonQuery()
                 Next
                 sql.CommandText = "COMMIT"
-                sql.ExecuteNonQuery()                             ' delete existing data
+                sql.ExecuteNonQuery()
             End Using
         End If
     End Function

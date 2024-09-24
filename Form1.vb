@@ -9,8 +9,10 @@ Imports System.Text.RegularExpressions
 Imports Esri.ArcGISRuntime
 Imports Esri.ArcGISRuntime.Data
 Imports Esri.ArcGISRuntime.Geometry
+Imports Esri.ArcGISRuntime.Ogc
 Imports Microsoft.Data.Sqlite
 Imports Microsoft.EntityFrameworkCore
+Imports Windows.ApplicationModel.Contacts
 
 Enum Winding
     Outer = 1
@@ -41,6 +43,7 @@ There are some additional folders which are closed by default. You must open the
 <tr><td>DXCC Entities</td><td>Polygons displaying the boundaries of all DXCC entities.</td></tr>
 <tr><td>Prefixes</td><td>The ARRL prefix for each entity is displayed in the center of the entity.</td></tr>
 <tr><td>Grid Squares</td><td>The boundary of every grid square that intersects with the land of an entity is displayed. The 4-character grid square code is displayed in the center of the grid square. This folder is searchable, so you can use it to locate any grid square.</td></tr>
+<tr><td>IOTA</td><td>Island Groups for Islands On The Air (IOTA).</td></tr>
 <tr><td>CQ Zones</td><td>CQ magazine (now defunct) zones used for Worked All Zones (WAZ) award now administered by ARRL.(Using data created by Francesco Crosilla IV3TMM (SK))</td></tr>
 <tr><td>ITU Zones</td><td>International Telegraphic Union (ITU) zones. (Using data created by Francesco Crosilla IV3TMM (SK))</td></tr>
 <tr><td>IARU regions</td><td>International Amateur Radio Union (IARU) regions. (Using data created by Tim Makins (EI8IC))</td></tr>
@@ -306,9 +309,8 @@ There are some additional folders which are closed by default. You must open the
     Private Async Sub UseOSMToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles UseOSMToolStripMenuItem.Click
         ' Retrieve country boundaries from OpenStreetMap (OSM)
         Dim sql As SqliteCommand, SQLdr As SqliteDataReader
-        Dim DXCC As Integer, Entity As String, geometry As String
+        Dim DXCC As Integer, Entity As String
         Dim ProcessList As New List(Of String)        ' list of countries to process
-        Dim Specials As New List(Of Integer) From {45, 247}   ' islands with no geometry
 
         Using connect As New SqliteConnection(DXCC_DATA)
             ' get all countries where the OSM parameters are known
@@ -324,18 +326,6 @@ There are some additional folders which are closed by default. You must open the
             SQLdr.Close()     ' close the reader
             For Each item In ProcessList
                 Await CreateGrids(connect, item)
-            Next
-            ' Do specials
-            For Each DXCC In Specials
-                sql.CommandText = $"SELECT * FROM `DXCC` WHERE `DXCCnum`={DXCC}"
-                SQLdr = sql.ExecuteReader()
-                SQLdr.Read()
-                Dim pnt = New MapPoint(SQLdr("lon"), SQLdr("lat"), SpatialReferences.Wgs84)     ' create a point at the DXCC
-                SQLdr.Close()
-                Dim boundary = GeometryEngine.BufferGeodetic(pnt, 50000, LinearUnits.Meters)     ' create a cicular island
-                geometry = boundary.ToJson
-                sql.CommandText = $"UPDATE `DXCC` SET `geometry`='{geometry}' WHERE `DXCCnum`={DXCC}"
-                sql.ExecuteNonQuery()         ' insert into database
             Next
         End Using
         AppendText(TextBox1, $"Done{vbCrLf}")
@@ -493,14 +483,13 @@ There are some additional folders which are closed by default. You must open the
             mpb.AddPoint(New MapPoint(CDbl(groups(1)), CDbl(groups(2))))
             mpb.AddPoint(New MapPoint(CDbl(groups(3)), CDbl(groups(2))))
             mpb.AddPoint(New MapPoint(CDbl(groups(3)), CDbl(groups(0))))
-            mpb.AddPoint(New MapPoint(CDbl(groups(1)), CDbl(groups(0))))
             result = mpb.ToGeometry
         Else        ' might be a polygon
             Dim matches = Regex.Match(bbox, "^poly:""([\d\.\- ]+)""$")
             If matches.Success Then
                 Dim data = Split(matches.Groups(1).Value, " ")      ' split space separated list of coordinates
                 Dim X As Double, Y As Double
-                Debug.Assert(data.Length Mod 2 = 0, "Odd number of coordinates")
+                Debug.Assert(data.Length Mod 2 = 0, "Must be even number of coordinates")
                 For i = 0 To data.Length - 1 Step 2
                     Debug.Assert(Double.TryParse(data(i), Y), "Badly formed double")
                     Debug.Assert(Double.TryParse(data(i + 1), X), "Badly formed double")
@@ -509,11 +498,16 @@ There are some additional folders which are closed by default. You must open the
                     End If
                     mpb.AddPoint(New MapPoint(CDbl(X), CDbl(Y)))         ' add xy pair
                 Next
+                If Not mpb.Parts(0).StartPoint.IsEqual(mpb.Parts(0).Points.Last) Then
+                    mpb.AddPoint(mpb.Parts(0).StartPoint)       ' close the polygon
+                End If
                 result = mpb.ToGeometry
             End If
         End If
-        'result = NormalizeCentralMeridian(result)
-        Return result       ' handle the central meridian
+        If CrossesAntiMeridian(result) Then result = NormalizeCentralMeridian(result)   ' handle the central meridian
+        result = result.Simplify
+        result = result.Densify(5)
+        Return result
     End Function
 
     Shared Function Between(value As Double, low As Double, high As Double) As Boolean
@@ -521,7 +515,7 @@ There are some additional folders which are closed by default. You must open the
         Debug.Assert(low <= high, "Low value must be less than high value")
         Return value >= low And value <= high
     End Function
-    Function CreatePolygon(plb As PolylineBuilder, country As String) As Polygon
+    Function CreatePolygon(plb As PolylineBuilder, Optional country As String = "None") As Polygon
         ' Convert a polyline into a polygon
         ' the ways retrieved are disjoint fragments of polygons.
         ' We must connect up the disjoint fragments.
@@ -676,6 +670,7 @@ There are some additional folders which are closed by default. You must open the
         ' Put a buffer around specific DXCC. Size is specified in nautical miles. Makes islands with distinct boundaries look more like the larger countries
         Dim CoastalLimit As New Dictionary(Of String, Integer) From {
             {"Andaman & Nicobar Is", 2},
+            {"Chagos", 1},
             {"Corsica", 4},
             {"Franz Josef Land", 12},
             {"Guernsey", 1},
@@ -686,6 +681,7 @@ There are some additional folders which are closed by default. You must open the
             {"Sardinia", 4},
             {"South Orkney Is", 2},
             {"South Shetland Is", 2},
+            {"Spratly Is", 2},
             {"St. Peter & St. Paul Rocks", 4}
             }
         If CoastalLimit.ContainsKey(country) Then
@@ -841,6 +837,9 @@ There are some additional folders which are closed by default. You must open the
     End Sub
     Shared Function CoIncident(a As MapPoint, b As MapPoint) As Boolean
         ' test if points are coincident
+        Debug.Assert(a.SpatialReference.Wkid = b.SpatialReference.Wkid, "Spatial references must be the same")
+        If Math.Sign(a.Y) = Math.Sign(b.Y) And Math.Abs(a.Y) >= 89.5 And Math.Abs(b.Y) >= 89.5 Then Return True        ' at the poles, longitude is irrelevant
+        If a.Y = b.Y And Math.Abs(a.X) = 180 And Math.Abs(b.X) = 180 Then Return True           ' +180 and -180 the same point
         Return a.IsEqual(b)
     End Function
     Shared Function ReversePart(p As Part) As Part
@@ -871,56 +870,7 @@ There are some additional folders which are closed by default. You must open the
     End Sub
 
     Private Sub MakeKMLToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles MakeKMLToolStripMenuItem.Click
-        ' Make a KML file of all Entity boundaries
-        Dim DXCClist As New List(Of Integer), BoundingBoxes As New List(Of (name As String, box As String))   ' bounding boxes to add at end
-        Dim sql As SqliteCommand, SQLdr As SqliteDataReader
-
-        Dim BaseFilename As String = $"{Application.StartupPath}\KML\DXCC Map of the World"
-        Using connect As New SqliteConnection(DXCC_DATA),
-            kml As New StreamWriter($"{BaseFilename}.kml", False)
-
-            connect.Open()
-            ' Create list of DXCC to convert to KML (all)
-            sql = connect.CreateCommand
-            sql.CommandText = "Select * FROM `DXCC` WHERE `Deleted`=0 And `geometry` Is Not NULL ORDER BY `Entity`"     ' fetch all geometry
-            SQLdr = sql.ExecuteReader
-            DXCClist.Clear()
-            BoundingBoxes.Clear()
-
-            While SQLdr.Read
-                DXCClist.Add(SQLdr("DXCCnum"))
-                Dim BoundingBox = SQLdr("bbox")
-                If Not IsDBNullorEmpty(BoundingBox) Then
-                    Dim box = ParseBox(BoundingBox)
-                    If box.Parts.Count > 1 Then
-                        AppendText(TextBox1, $"{SQLdr("Entity")} crosses anti-meridian{vbCrLf}")
-                    End If
-                    BoundingBoxes.Add((name:=SQLdr("Entity"), box:=box.ToJson))
-                End If
-            End While
-            SQLdr.Close()
-            kml.WriteLine(KMLheader)
-            KMLlist(connect, kml, DXCClist)
-            If DXCClist.Contains(15) Or DXCClist.Contains(54) Then EUASborder(kml)      ' kml contains EU or AS Russia, then include the boundary
-            PrefixFolder(kml)
-            GridSquareFolder(connect, kml, DXCClist)
-            ZoneFolder(connect, kml)
-            IARUFolder(connect, kml)
-            TimeZoneFolder(connect, kml)
-            BoundingBoxFolder(kml, BoundingBoxes)
-            AntarcticFolder(connect, kml)
-            kml.WriteLine(KMLfooter)
-            kml.Close()
-            ' compress to zip file
-            System.IO.File.Delete(BaseFilename & ".kmz")
-            Dim zip As ZipArchive = ZipFile.Open(BaseFilename & ".kmz", ZipArchiveMode.Create)    ' create new archive file
-            zip.CreateEntryFromFile(BaseFilename & ".kml", "doc.kml", CompressionLevel.Optimal)   ' compress output file
-            zip.Dispose()
-            Dim kmlSize As Long = FileLen(BaseFilename & ".kml")
-            Dim kmzSize As Long = FileLen(BaseFilename & ".kmz")
-            AppendText(TextBox1, $"KML file {BaseFilename} of {kmlSize / 1024:f0} Kb compressed to {kmzSize / 1024:f0} Kb, i.e. {kmzSize / kmlSize * 100:f0}%{vbCrLf}")
-            AppendText(TextBox1, $"Done{vbCrLf}")
-        End Using
+        MakeKML()
     End Sub
     Shared Function SQLescape(st As String) As String
         ' escape special characters for SQL
@@ -1026,16 +976,17 @@ There are some additional folders which are closed by default. You must open the
     End Function
 
     Shared Function PolygonArea(polygon As ReadOnlyPart) As Double
-        ' Calculate the area, in square meters, of a polygon using the 'Shoelace' or Gauss's formula
-        ' https://en.wikipedia.org/wiki/Shoelace_formula
+        ' Calculate the area of a polygon using the 'Shoelace' or Gauss's formula
+        ' https://en.wikipedia.org/wiki/Shoelace_formula Triangle formula
         ' if result < 0 then CW winding (outer), else CCW (inner)
         Contract.Requires(polygon IsNot Nothing AndAlso Not polygon.IsEmpty, "Illegal polygon")
         Dim result As Double = 0
         If polygon.Count > 2 Then           ' ignore degenerate polygon
-            Dim polyMeters As New Polygon(polygon)          ' Convert part to polygon
-            polyMeters = polyMeters.Project(SpatialReferences.WebMercator)       ' convert polygon to linear datum in meters
-            For Each s In polyMeters.Parts(0)       ' apply shoelace formula
-                result += s.StartPoint.X * s.EndPoint.Y - s.EndPoint.X * s.StartPoint.Y
+            For p = 0 To polygon.Points.Count - 1       ' apply shoelace formula
+                With polygon
+                    Dim pp1 = (p + 1) Mod .Points.Count       ' pp1 wraps around to first point
+                    result += .Points(p).X * .Points(pp1).Y - .Points(pp1).X * .Points(p).Y
+                End With
             Next
         End If
         Return result / 2
@@ -1190,25 +1141,7 @@ There are some additional folders which are closed by default. You must open the
 
     Private Sub MakeKMLAllEntitiesToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles MakeKMLAllEntitiesToolStripMenuItem.Click
         ' Make individual KML files for all entities
-        Dim sql As SqliteCommand, SQLdr As SqliteDataReader
-        Using connect As New SqliteConnection(DXCC_DATA)
-            connect.Open()
-            With ProgressBar1
-                .Minimum = 0
-                .Maximum = 340
-                .Value = 0
-            End With
-            sql = connect.CreateCommand
-            sql.CommandText = ("SELECT * FROM `DXCC` WHERE `DELETED`=0 AND `DXCCnum`<>999 ORDER BY `Entity`")
-            SQLdr = sql.ExecuteReader
-            While SQLdr.Read
-                Using kml As New StreamWriter($"{Application.StartupPath}\KML\DXCC_{SQLdr("Entity")}.kml", False)
-                    kml.WriteLine(KMLheader)
-                    Placemark(connect, kml, SQLdr("DXCCnum"))
-                    kml.WriteLine(KMLfooter)
-                End Using
-            End While
-        End Using
+        MakeKMLAllEntities()
     End Sub
     Private Sub InnerRingsToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles InnerRingsToolStripMenuItem.Click
         ' Find countries with inner rings. Some are genuine
@@ -1326,54 +1259,80 @@ There are some additional folders which are closed by default. You must open the
     Private Async Sub ImportLandSquareListToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles ImportLandSquareListToolStripMenuItem.Click
         Await LandSquareList()
     End Sub
-    Async Function LandSquareList() As Task
+
+    Public Async Function LandSquareList() As Task
         ' Import a list of squares that are land
         Const LandDataURL = "https://osmdata.openstreetmap.de/download/land-polygons-split-4326.zip"    ' remote source of land data
         Const LandDataFile = "D:\GIS Data\Land Polygons\split\land_polygons.shp"                        ' local copy of land data
-        Const LandDataZip = "D:\GIS Data\Land Polygons\split\land-polygons-split-4326.zip"                        ' local copy of land data
-        Dim myQueryFilter As New QueryParameters, count As Integer = 0, responseString As String
-        Dim httpResult As System.Net.Http.HttpResponseMessage, timer As New Stopwatch
+        Const LandDataZip = "D:\GIS Data\Land Polygons\split\land-polygons-split-4326.zip"              ' local copy of land data
+        Const readChunkSize = 1024 * 1024            ' block size of bytes read
+        Dim myQueryFilter As New QueryParameters, count As Integer = 0
+        Dim timer As New Stopwatch
 
+        With ProgressBar1
+            .Minimum = 0
+            .Value = 0
+            .Maximum = 100
+        End With
         ' Check the date on the latest download file
         Using httpClient As New System.Net.Http.HttpClient()
             httpClient.Timeout = New TimeSpan(0, 10, 0)        ' 10 min timeout
-            Try
-                Dim request = New HttpRequestMessage(HttpMethod.Head, LandDataURL)      ' request for header only
-                httpResult = Await httpClient.SendAsync(request)
-                httpResult.EnsureSuccessStatusCode()
-                Dim LandDataURLDate = httpResult.Content.Headers.LastModified.Value.UtcDateTime
-                Dim LandDataFileDate = File.GetLastWriteTimeUtc(LandDataZip)
-                Dim DateStatus As String
-                If LandDataURLDate > LandDataFileDate Then DateStatus = "Land data is Out of Date" Else DateStatus = "Land data is Current"
-                If MsgBox($"The OSM land data is dated {LandDataURLDate.ToUniversalTime:yyyy-MM-dd hh:mm}{vbCrLf}The local copy is dated {LandDataFileDate.ToUniversalTime:yyyy-MM-dd hh:mm}{vbCrLf}{vbCrLf}Do you wish to update the data ?", vbInformation + vbYesNo, DateStatus) = vbYes Then
+            Dim response = Await httpClient.GetAsync(LandDataURL, HttpCompletionOption.ResponseHeadersRead)      ' request for header only
+            If Not response.IsSuccessStatusCode Then
+                MsgBox($"Error: {response.StatusCode}", vbCritical + vbOKOnly, "Error")
+                Return
+            End If
 
-                    ' get data from OSM
-                    timer.Start()
-                    Try
-                        AppendText(TextBox1, "Fetching land data from OSM ")
-                        httpResult = Await httpClient.GetAsync(LandDataURL)
-                        httpResult.EnsureSuccessStatusCode()
-                        Dim zipdata = Await httpResult.Content.ReadAsByteArrayAsync()
-                        AppendText(TextBox1, $"{zipdata.Length} bytes retrieved [{timer.ElapsedMilliseconds / 1000:f1}s]{vbCrLf}")
-                        File.WriteAllBytes(LandDataZip, zipdata)
-                        ' Now unzip downloaded file
-                        Using archive = ZipFile.OpenRead(LandDataZip)
-                            Dim targetDirectory = Path.GetDirectoryName(LandDataZip)
-                            For Each entry In archive.Entries
-                                entry.ExtractToFile($"{targetDirectory}\{entry.Name}", True)
-                            Next
-                        End Using
-                    Catch ex As HttpRequestException
-                        MsgBox($"{ex.Message}{vbCrLf}", vbCritical + vbOKOnly, "OSM request error")
-                    End Try
-                End If
-            Catch ex As HttpRequestException
-                MsgBox($"{ex.Message}{vbCrLf}", vbCritical + vbOKOnly, "OSM request error")
-            End Try
+            ' Check dates
+            Dim LandDataURLDate = response.Content.Headers.LastModified.Value.UtcDateTime
+            Dim LandDataFileDate = File.GetLastWriteTimeUtc(LandDataZip)
+            Dim DateStatus As String
+            If LandDataURLDate > LandDataFileDate Then DateStatus = "Land data is Out of Date" Else DateStatus = "Land data is Current"
+            If MsgBox($"The OSM land data is dated {LandDataURLDate.ToUniversalTime:yyyy-MM-dd hh:mm}{vbCrLf}The local copy is dated {LandDataFileDate.ToUniversalTime:yyyy-MM-dd hh:mm}{vbCrLf}{vbCrLf}Do you wish to update the data ?", vbInformation + vbYesNo, DateStatus) = vbYes Then
+                Dim totalBytes = response.Content.Headers.ContentLength       ' get count of total bytes
+                timer.Start()
+                AppendText(TextBox1, $"Fetching {totalBytes:n0} bytes of land data from OSM ")
+                Dim totalBytesRead As Long = 0      ' total bytes read todate
+                ' Download the file from OSM with progress indicator
+                Using contentStream = Await response.Content.ReadAsStreamAsync,
+                    filestream = New FileStream(LandDataZip, FileMode.Create, FileAccess.Write, FileShare.None, readChunkSize, True)
+                    Dim buffer(readChunkSize) As Byte       ' byte buffer
+                    Dim bytesRead As Integer                ' bytes read in block
+                    Do
+                        bytesRead = Await contentStream.ReadAsync(buffer, 0, buffer.Length)     ' read a block
+                        If bytesRead > 0 Then       ' block is not empty
+                            Await filestream.WriteAsync(buffer, 0, bytesRead)   ' write the block to the file
+                            totalBytesRead += bytesRead         ' count total bytes read
+                            Dim progressPercentage As Integer = totalBytesRead / totalBytes * 100   ' calculate percentage progress
+                            ProgressBar1.Value = progressPercentage         ' display progress
+                        End If
+                    Loop Until bytesRead = 0    ' stop when no bytes read
+                    filestream.Close()
+                End Using
+                ' Now unzip downloaded file
+                Using archive = ZipFile.OpenRead(LandDataZip)
+                    Dim targetDirectory = Path.GetDirectoryName(LandDataZip)
+                    For Each entry In archive.Entries
+                        entry.ExtractToFile($"{targetDirectory}\{entry.Name}", True)
+                    Next
+                End Using
+                timer.Stop()
+                AppendText(TextBox1, $"[{timer.ElapsedMilliseconds / 1000:f1}s]{vbCrLf}")
+            Else
+                Return
+            End If
         End Using
 
         ' Convert the OSM data into a list of grid squares that contain land
+        timer.Restart()
         Dim Features = Await ShapefileFeatureTable.OpenAsync(LandDataFile)
+        With myQueryFilter
+            .OutSpatialReference = SpatialReferences.Wgs84     ' results in WGS84
+            .ReturnGeometry = False
+        End With
+        Dim land = Await Features.QueryFeaturesAsync(myQueryFilter).ConfigureAwait(False)           ' return all geometry
+        Dim featureCount = land.Count
+        AppendText(TextBox1, $"Loading {featureCount} squares into database.")
         Using connect As New SqliteConnection(Form1.DXCC_DATA)
             Dim sql As SqliteCommand, sqlDR As SqliteDataReader
             connect.Open()
@@ -1387,18 +1346,11 @@ There are some additional folders which are closed by default. You must open the
             sql.ExecuteNonQuery()
             sql.CommandText = "DELETE FROM LAND"
             sql.ExecuteNonQuery()
-            With myQueryFilter
-                .OutSpatialReference = SpatialReferences.Wgs84     ' results in WGS84
-                .ReturnGeometry = True
-            End With
-            Dim land = Await Features.QueryFeaturesAsync(myQueryFilter).ConfigureAwait(False)           ' retrun all geometry
-            InitializeProgressBar(ProgressBar1, 0, 0, land.Count, 20)
-            Dim f = land.Count
             For Each feature In land
                 Dim pnt = New MapPoint(CDbl(feature.Attributes("x")), CDbl(feature.Attributes("y")), SpatialReferences.Wgs84)
                 sql.CommandText = $"INSERT OR REPLACE INTO LAND (gridsquare) VALUES ('{GridSquare(pnt)}')"
                 sql.ExecuteNonQuery()
-                UpdateProgressBar(ProgressBar1, count)
+                UpdateProgressBar(ProgressBar1, count / featureCount * 100)
                 count += 1
             Next
             sql.CommandText = "COMMIT"
@@ -1408,9 +1360,10 @@ There are some additional folders which are closed by default. You must open the
             sqlDR.Read()
             Dim After As Integer = sqlDR("Count")
             sqlDR.Close()
-            AppendText(TextBox1, $"{count} features processed. Grid squares before={Before}, after={After}{vbCrLf}")
+            AppendText(TextBox1, $" Grid squares before={Before}, after={After} [{timer.ElapsedMilliseconds / 1000:f1}s]{vbCrLf}")
         End Using
     End Function
+
     Public Delegate Sub InitializeProgressCallback(pb As System.Windows.Forms.ProgressBar, min As Integer, value As Integer, max As Integer, stp As Integer)
     Public Sub InitializeProgressBar(pb As System.Windows.Forms.ProgressBar, min As Integer, value As Integer, max As Integer, stp As Integer)
         If pb.InvokeRequired Then
@@ -1434,6 +1387,276 @@ There are some additional folders which are closed by default. You must open the
             pb.Value = value
         End If
         Application.DoEvents()
+    End Sub
+
+    Private Sub NormalizeCentralMeridianToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles NormalizeCentralMeridianToolStripMenuItem.Click
+        Dim plb As New PolylineBuilder(SpatialReferences.Wgs84)       ' drawn bounding box
+        Dim PolyGbuilder As New PolygonBuilder(SpatialReferences.Wgs84)
+        With plb
+            .AddPoint(New MapPoint(177.17, -19.25))       ' first point
+            .AddPoint(New MapPoint(-179.65, -19.25))
+            .AddPoint(New MapPoint(-179.65, -15.67))
+            .AddPoint(New MapPoint(177.17, -15.67))
+            .AddPoint(New MapPoint(177.17, -19.25))       ' last point
+        End With
+        With PolyGbuilder
+            .AddPoint(New MapPoint(177.17, -19.25))       ' first point
+            .AddPoint(New MapPoint(-179.65, -19.25))
+            .AddPoint(New MapPoint(-179.65, -15.67))
+            .AddPoint(New MapPoint(177.17, -15.67))
+            .AddPoint(New MapPoint(177.17, -19.25))       ' last point
+        End With
+        For i = 0 To plb.Parts(0).Points.Count - 1
+            If plb.Parts(0).Points(i).X < 0 Then
+                plb.Parts(0).SetPoint(i, New MapPoint(plb.Parts(0).Points(i).X + 360, plb.Parts(0).Points(i).Y))   ' add 360 to X
+            End If
+        Next
+        Dim linestring = plb.ToGeometry
+        AppendText(TextBox1, $"linestring Before {linestring}{vbCrLf}")
+        Dim normal = linestring.NormalizeCentralMeridian
+        AppendText(TextBox1, $"linestring After {normal}{vbCrLf}")
+        Dim polyg = PolyGbuilder.ToGeometry
+        AppendText(TextBox1, $"polygon Before {polyg}{vbCrLf}")
+        polyg = polyg.Simplify
+        Dim normalp = polyg.NormalizeCentralMeridian
+        AppendText(TextBox1, $"polygon After {polyg}{vbCrLf}")
+    End Sub
+
+    Private Async Sub KMLArcGISToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles KMLArcGISToolStripMenuItem.Click
+        Dim sql As SqliteCommand, sqldr As SqliteDataReader
+        Const BaseFilename = "DXCC Map"
+        Dim Document = New KmlDocument With {
+            .Name = "DXCC Map of the World"
+        }
+        Dim Folder = New KmlFolder
+        Document.ChildNodes.Add(Folder)
+        Folder.Name = "DXCC Entities"
+        Using connect As New SqliteConnection(Form1.DXCC_DATA)
+            connect.Open()
+            ' Create list of DXCC to convert to KML (all)
+            sql = connect.CreateCommand
+            sql.CommandText = "Select * FROM `DXCC` WHERE `Deleted`=0 And `geometry` Is Not NULL ORDER BY `Entity`"     ' fetch all geometry
+            sqldr = sql.ExecuteReader
+            While sqldr.Read
+                Dim geom As Polygon = Geometry.FromJson(sqldr("geometry"))
+                Dim lb = geom.LabelPoint
+                Dim kmlgeo As New KmlGeometry(geom, KmlAltitudeMode.ClampToGround, False, True)
+                Dim placemark As New KmlPlacemark(kmlgeo)
+                With placemark
+                    .Name = sqldr("Entity")
+                End With
+                Folder.ChildNodes.Add(placemark)
+            End While
+            sqldr.Close()
+            Await Document.SaveAsAsync($"{BaseFilename}.kml")
+            ' compress to zip file
+            'System.IO.File.Delete(BaseFilename & ".kmz")
+            'Dim zip As ZipArchive = ZipFile.Open(BaseFilename & ".kmz", ZipArchiveMode.Create)    ' create new archive file
+            'zip.CreateEntryFromFile(BaseFilename & ".kml", "doc.kml", CompressionLevel.Optimal)   ' compress output file
+            'zip.Dispose()
+            'Dim kmlSize As Long = FileLen(BaseFilename & ".kml")
+            'Dim kmzSize As Long = FileLen(BaseFilename & ".kmz")
+            'AppendText(TextBox1, $"KML file {BaseFilename} of {kmlSize / 1024:f0} Kb compressed to {kmzSize / 1024:f0} Kb, i.e. {kmzSize / kmlSize * 100:f0}%{vbCrLf}")
+            AppendText(TextBox1, $"Done{vbCrLf}")
+        End Using
+    End Sub
+
+    Private Sub FindIARURegionToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles FindIARURegionToolStripMenuItem.Click
+        ' Find IARU region for entities missing one
+        Dim IARUlines As New Dictionary(Of Integer, Polyline)       ' IARU boundary lines
+        Dim IARU As New Dictionary(Of Integer, Integer()) From {
+            {1, {1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 16, 17, 21}},
+            {2, {1, 2, 3, 4, 5, 6, 10, 12, 13, 14, 16, 17, 21, 22, 23, 24, 26}},
+            {3, {7, 8, 9, 10, 11, 12, 13, 14, 22, 23, 24, 26}}
+            }
+        Dim IARUPoly As New Dictionary(Of Integer, Polygon), sql As SqliteCommand, sqldr As SqliteDataReader, LineCounts As New Dictionary(Of Integer, Integer)
+        Dim IARUregions As New Dictionary(Of Integer, Integer)
+
+        ' Check that each line appears exactly twice in the IARU matrix
+        For i = 1 To 26 : LineCounts.Add(i, 0) : Next
+        For rgn = 1 To 3
+            For i = LBound(IARU(rgn)) To UBound(IARU(rgn)) : LineCounts(IARU(rgn)(i)) += 1 : Next
+        Next
+        For i = 1 To LineCounts.Count
+            If LineCounts(i) <> 2 Then AppendText(TextBox1, $"Invalid line count of {LineCounts(i)} for line {i}{vbCrLf}")
+        Next
+
+        Using connect As New SqliteConnection(DXCC_DATA)
+            connect.Open()
+            ' Retrieve all IARU line segments
+            sql = connect.CreateCommand
+            sql.CommandText = "Select * FROM `IARU`"     ' fetch all geometry
+            sqldr = sql.ExecuteReader
+            While sqldr.Read
+                IARUlines.Add(sqldr("line"), Geometry.FromJson(sqldr("geometry")))
+            End While
+            sqldr.Close()
+            ' Make polygons for all 3 regions
+            For rgn = 1 To 3
+                AppendText(TextBox1, $"Processing region {rgn}{vbCrLf}")
+                ' make a polygon for this region
+                Dim plb As New PolylineBuilder(SpatialReferences.Wgs84)
+                For i = LBound(IARU(rgn)) To UBound(IARU(rgn))
+                    ' add each line to a region
+                    For Each prt In IARUlines(IARU(rgn)(i)).Parts
+                        plb.AddPart(prt)
+                    Next
+                Next
+                ' round all X,Y coordinates
+                For prt = 0 To plb.Parts.Count - 1
+                    For pnt = 0 To plb.Parts(prt).Points.Count - 1
+                        plb.Parts(prt).SetPoint(pnt, New MapPoint(Math.Round(plb.Parts(prt).Points(pnt).X, 3), Math.Round(plb.Parts(prt).Points(pnt).Y, 3), SpatialReferences.Wgs84))
+                    Next
+                Next
+                Repair(plb)
+                Dim poly As Polygon = CreatePolygon(plb)
+                If rgn = 2 Then poly = ReversePolygon(poly)
+                'poly = poly.Simplify
+                poly = NormalizeCentralMeridian(poly)
+                IARUPoly.Add(rgn, poly)
+            Next
+            ' make a KML file for each region
+            Using kml As New StreamWriter($"{Application.StartupPath}\IARU Regions.kml")
+                kml.WriteLine(KMLheader)
+                Dim styles As String() = New String() {"", "#red", "#blue", "#yellow"}
+                For r = 1 To 3
+                    kml.WriteLine($"<Placemark><name>IARU region {r}</name><styleUrl>{styles(r)}</styleUrl>")
+                    KMLPolygon(kml, IARUPoly(r), 1, False)
+                    kml.WriteLine("</Placemark>")
+                Next
+                kml.WriteLine(KMLfooter)
+            End Using
+            ' Resolve IARU region where it is 0
+            Dim count As Integer = 0, total As Integer = 0
+            sql.CommandText = "Select * FROM `DXCC` WHERE IARU=0 AND Deleted=0 AND geometry IS NOT NULL ORDER By Entity"     ' fetch all geometry
+            sqldr = sql.ExecuteReader
+            While sqldr.Read
+                total += 1
+                Dim geom = Polygon.FromJson(sqldr("geometry"))
+                Dim regions As New List(Of Integer)
+                If IARUPoly(1).Intersects(geom) Then regions.Add(1)
+                If Not IARUPoly(2).Intersects(geom) Then regions.Add(2)
+                If IARUPoly(3).Intersects(geom) Then regions.Add(3)
+                If regions.Count = 1 Then
+                    AppendText(TextBox1, $"{sqldr("Entity")} is in IARU Region {regions(0)}{vbCrLf}")
+                    IARUregions.Add(sqldr("DXCCnum"), regions(0))
+                    count += 1
+                Else
+                    AppendText(TextBox1, $"{sqldr("Entity")} could not be isolated to a single region {regions}{vbCrLf}")
+                End If
+            End While
+            sqldr.Close()
+            ' Update data
+            For Each entry In IARUregions
+                sql.CommandText = $"UPDATE `DXCC` SET IARU={entry.Value} WHERE DXCCnum={entry.Key}"   ' update data
+                sql.ExecuteNonQuery()
+            Next
+            AppendText(TextBox1, $"Done. {count} out of {total} regions resolved{vbCrLf}")
+        End Using
+    End Sub
+
+    Function ReversePolygon(poly As Polygon) As Polygon
+        Dim plb As New PolygonBuilder(poly.SpatialReference)
+        For prt = 0 To poly.Parts.Count - 1
+            Dim points = poly.Parts(prt).Points.ToList
+            points.Reverse()
+            plb.AddPoints(points)
+        Next
+        Dim result = plb.ToGeometry
+        Return result
+    End Function
+    Sub Repair(ByRef plb As PolylineBuilder)
+        ' Repair collection of polylines
+        ' All lines must connect to another
+        For outer = 0 To plb.Parts.Count - 1
+            Dim StartTouch = False, EndTouch = False
+            For inner = 0 To plb.Parts.Count - 1
+                If outer <> inner Then
+                    If CoIncident(plb.Parts(outer).StartPoint, plb.Parts(inner).StartPoint) Or
+                   CoIncident(plb.Parts(outer).StartPoint, plb.Parts(inner).EndPoint) Then
+                        StartTouch = True
+                    End If
+                    If CoIncident(plb.Parts(outer).EndPoint, plb.Parts(inner).EndPoint) Or
+                       CoIncident(plb.Parts(outer).EndPoint, plb.Parts(inner).StartPoint) Then
+                        EndTouch = True
+                    End If
+                    If StartTouch And EndTouch Then Exit For
+                End If
+            Next
+            If Not StartTouch Then
+                AppendText(TextBox1, $"line {outer} Start does not touch any other line{vbCrLf}Attempting repair ")
+                ' Find the nearest matching start/end
+                Dim ClosestDistance As Double = Double.MaxValue, ClosestIndex As Integer, ClosestEnd As String, OtherEnd As String, distance As Double
+                For other = 0 To plb.Parts.Count - 1
+                    If outer <> other Then
+                        distance = GeometryEngine.Distance(plb.Parts(outer).StartPoint, plb.Parts(other).StartPoint)      ' calculate distance to all other starts
+                        If distance < ClosestDistance Then
+                            ClosestDistance = distance
+                            ClosestIndex = other
+                            OtherEnd = "Start"
+                            ClosestEnd = "Start"
+                        End If
+                        distance = GeometryEngine.Distance(plb.Parts(outer).StartPoint, plb.Parts(other).EndPoint)      ' calculate distance to all other starts
+                        If distance < ClosestDistance Then
+                            ClosestDistance = distance
+                            ClosestIndex = other
+                            OtherEnd = "End"
+                            ClosestEnd = "Start"
+                        End If
+                    End If
+                Next
+                AppendText(TextBox1, $"Closest to line {outer} {ClosestEnd} is line {ClosestIndex} {OtherEnd} at distance of {ClosestDistance:f3}deg{vbCrLf}")
+                If ClosestDistance < 0.1 Then
+                    ' Repair
+                    Dim node As MapPoint
+                    Select Case OtherEnd
+                        Case "Start" : node = plb.Parts(ClosestIndex).StartPoint
+                        Case "End" : node = plb.Parts(ClosestIndex).EndPoint
+                    End Select
+                    plb.Parts(outer).SetPoint(0, node)      ' reset start
+                    AppendText(TextBox1, $"Repaired{vbCrLf}")
+                End If
+            End If
+
+            If Not EndTouch Then
+                AppendText(TextBox1, $"line {outer} End does not touch any other line{vbCrLf}Attempting repair ")
+                ' Find the nearest matching start/end
+                Dim ClosestDistance As Double = Double.MaxValue, ClosestIndex As Integer, ClosestEnd As String, OtherEnd As String, distance As Double
+                For other = 0 To plb.Parts.Count - 1
+                    If outer <> other Then
+                        distance = GeometryEngine.Distance(plb.Parts(outer).EndPoint, plb.Parts(other).StartPoint)      ' calculate distance to all other starts
+                        If distance < ClosestDistance Then
+                            ClosestDistance = distance
+                            ClosestIndex = other
+                            OtherEnd = "Start"
+                            ClosestEnd = "End"
+                        End If
+                        distance = GeometryEngine.Distance(plb.Parts(outer).EndPoint, plb.Parts(other).EndPoint)      ' calculate distance to all other starts
+                        If distance < ClosestDistance Then
+                            ClosestDistance = distance
+                            ClosestIndex = other
+                            OtherEnd = "End"
+                            ClosestEnd = "End"
+                        End If
+                    End If
+                Next
+                AppendText(TextBox1, $"Closest to line {outer} {ClosestEnd} is line {ClosestIndex} {OtherEnd} at distance of {ClosestDistance:f3}deg{vbCrLf}")
+                If ClosestDistance < 0.1 Then
+                    ' Repair
+                    Dim node As MapPoint
+                    Select Case OtherEnd
+                        Case "Start" : node = plb.Parts(ClosestIndex).StartPoint
+                        Case "End" : node = plb.Parts(ClosestIndex).EndPoint
+                    End Select
+                    plb.Parts(outer).SetPoint(plb.Parts(outer).Points.Count - 1, node)      ' reset end
+                    AppendText(TextBox1, $"Repaired{vbCrLf}")
+                End If
+            End If
+        Next
+    End Sub
+
+    Private Sub MakeHamclockZonesToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles MakeHamclockZonesToolStripMenuItem.Click
+        MakeHamclockZones()
     End Sub
 End Class
 
