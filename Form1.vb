@@ -44,8 +44,8 @@ There are some additional folders which are closed by default. You must open the
 <tr><td>Prefixes</td><td>The ARRL prefix for each entity is displayed in the center of the entity.</td></tr>
 <tr><td>Grid Squares</td><td>The boundary of every grid square that intersects with the land of an entity is displayed. The 4-character grid square code is displayed in the center of the grid square. This folder is searchable, so you can use it to locate any grid square.</td></tr>
 <tr><td>IOTA</td><td>Island Groups for Islands On The Air (IOTA).</td></tr>
-<tr><td>CQ Zones</td><td>CQ magazine (now defunct) zones used for Worked All Zones (WAZ) award now administered by ARRL.(Using data created by Francesco Crosilla IV3TMM (SK))</td></tr>
-<tr><td>ITU Zones</td><td>International Telegraphic Union (ITU) zones. (Using data created by Francesco Crosilla IV3TMM (SK))</td></tr>
+<tr><td>CQ Zones</td><td>CQ magazine (now defunct) zones used for Worked All Zones (WAZ) award now administered by ARRL.(Based on data created by Elwood Downey (WBØOEW), extracted from http://zone-check.eu/.)</td></tr>
+<tr><td>ITU Zones</td><td>International Telegraphic Union (ITU) zones. (Based on data created by Elwood Downey (WBØOEW), extracted from http://zone-check.eu/.)</td></tr>
 <tr><td>IARU regions</td><td>International Amateur Radio Union (IARU) regions. (Using data created by Tim Makins (EI8IC))</td></tr>
 <tr><td>Timezones</td><td>World time zones</td></tr>
 <tr><td>Antarctic bases</td><td>Location and basic details of Antarctic bases.</td></tr>
@@ -1653,10 +1653,6 @@ There are some additional folders which are closed by default. You must open the
                 End If
             End If
         Next
-    End Sub
-
-    Private Sub MakeHamclockZonesToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles MakeHamclockZonesToolStripMenuItem.Click
-        MakeHamclockZones()
     End Sub
 End Class
 

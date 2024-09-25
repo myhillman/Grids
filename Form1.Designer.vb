@@ -67,7 +67,6 @@ Partial Class Form1
         ProgressBar1 = New ProgressBar()
         DummyToolStripMenuItem = New ToolStripMenuItem()
         OpenFileDialog1 = New OpenFileDialog()
-        MakeHamclockZonesToolStripMenuItem = New ToolStripMenuItem()
         MenuStrip1.SuspendLayout()
         SuspendLayout()
         ' 
@@ -303,7 +302,7 @@ Partial Class Form1
         ' 
         ' TestToolStripMenuItem
         ' 
-        TestToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {ParseBoxToolStripMenuItem, NormalizeCentralMeridianToolStripMenuItem, KMLArcGISToolStripMenuItem, MakeHamclockZonesToolStripMenuItem})
+        TestToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {ParseBoxToolStripMenuItem, NormalizeCentralMeridianToolStripMenuItem, KMLArcGISToolStripMenuItem})
         TestToolStripMenuItem.Name = "TestToolStripMenuItem"
         TestToolStripMenuItem.Size = New Size(39, 20)
         TestToolStripMenuItem.Text = "Test"
@@ -351,12 +350,6 @@ Partial Class Form1
         ' OpenFileDialog1
         ' 
         OpenFileDialog1.FileName = "OpenFileDialog1"
-        ' 
-        ' MakeHamclockZonesToolStripMenuItem
-        ' 
-        MakeHamclockZonesToolStripMenuItem.Name = "MakeHamclockZonesToolStripMenuItem"
-        MakeHamclockZonesToolStripMenuItem.Size = New Size(213, 22)
-        MakeHamclockZonesToolStripMenuItem.Text = "Make Hamclock zones"
         ' 
         ' Form1
         ' 
@@ -420,6 +413,5 @@ Partial Class Form1
     Friend WithEvents NormalizeCentralMeridianToolStripMenuItem As ToolStripMenuItem
     Friend WithEvents KMLArcGISToolStripMenuItem As ToolStripMenuItem
     Friend WithEvents FindIARURegionToolStripMenuItem As ToolStripMenuItem
-    Friend WithEvents MakeHamclockZonesToolStripMenuItem As ToolStripMenuItem
 
 End Class

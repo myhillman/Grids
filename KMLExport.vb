@@ -504,18 +504,11 @@ Module KMLExport
         Form1.AppendText(Form1.TextBox1, "Making KML for CQ/ITU folders.")
         Application.DoEvents()
         sql = connect.CreateCommand
-        kml.WriteLine("<Folder><name>CQ Zones</name><visibility>0</visibility>")
-        kml.WriteLine("<description>Lines describing CQ Zones. Based on data created by Francesco Crosilla IV3TMM (SK).</description>")
-        kml.WriteLine("<Style id=""CQ""><LabelStyle><color>fF0000ff</color><scale>6</scale></LabelStyle><IconStyle><Icon></Icon></IconStyle><LineStyle><color>fF0000Ff</color><width>5</width></LineStyle></Style>")
+        ' Create CQ zones
         CreateZoneKML(connect, kml, "CQ")
-        kml.WriteLine("</Folder>")
 
         'Now do ITU zones
-        kml.WriteLine("<Folder><name>ITU Zones</name><visibility>0</visibility>")
-        kml.WriteLine("<description>Lines describing ITU Zones. Based on data created by Francesco Crosilla IV3TMM (SK).</description>")
-        kml.WriteLine("<Style id=""ITU""><LabelStyle><color>ffff02fc</color><scale>6</scale></LabelStyle><IconStyle><Icon></Icon></IconStyle><LineStyle><color>ffff02fc</color><width>5</width></LineStyle></Style>")
         CreateZoneKML(connect, kml, "ITU")
-        kml.WriteLine("</Folder>")
         timer.Stop()
         Form1.AppendText(Form1.TextBox1, $" [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")
     End Sub
@@ -525,28 +518,44 @@ Module KMLExport
         Dim sql As SqliteCommand, SQLdr As SqliteDataReader
 
         sql = connect.CreateCommand
-        ' First do the linestrings
-        kml.WriteLine("<Folder><name>Boundaries</name><open>0</open>")
-        sql.CommandText = $"SELECT * FROM ZoneLines WHERE Type='{zone}' ORDER BY line"
-        SQLdr = sql.ExecuteReader
-        While SQLdr.Read
-            kml.WriteLine($"<Placemark><visibility>0</visibility><styleUrl>#{zone}</styleUrl><name>{zone} line {SQLdr("line")}</name>")
-            Dim linestring As Multipoint = Geometry.FromJson(SQLdr("geometry"))
-            KMLMultipoint(kml, linestring, 1)
-            kml.WriteLine("</Placemark>")
-        End While
-        SQLdr.Close()
-        kml.WriteLine("</Folder>")
+        ' Create the folder
+        kml.WriteLine($"<Folder><name>{zone} Zones</name><visibility>0</visibility><open>0</open>")
+        kml.WriteLine("<description>Polygons describing {zone} Zones. Based on data created by Elwood Downey (WBØOEW), extracted from http://zone-check.eu/.</description>")
+        Select Case zone
+            Case "CQ"
+                ' add styles for hover over polygon
+                kml.WriteLine($"<Style id='CQnormal'><PolyStyle><fill>0</fill><outline>1</outline></PolyStyle><LabelStyle><color>ff0000ff</color><scale>6</scale></LabelStyle><IconStyle><Icon></Icon></IconStyle><LineStyle><color>ff0000ff</color><width>5</width></LineStyle></Style>")
+                kml.WriteLine($"<Style id='CQhighlight'><PolyStyle><color>400000ff</color><fill>1</fill><outline>1</outline></PolyStyle><LabelStyle><color>fF0000ff</color><scale>6</scale></LabelStyle><IconStyle><Icon></Icon></IconStyle><LineStyle><color>ff0000ff</color><width>5</width></LineStyle></Style>")
+                kml.WriteLine($"<StyleMap id='CQ'>
+                    <Pair><key>normal</key><styleUrl>#CQnormal</styleUrl></Pair>
+                    <Pair><key>highlight</key><styleUrl>#CQhighlight</styleUrl></Pair>
+                    </StyleMap>")
+            Case "ITU"
+                ' add styles for hover over polygon
+                kml.WriteLine($"<Style id='ITUnormal'><PolyStyle><fill>0</fill><outline>1</outline></PolyStyle><LabelStyle><color>ffff00ff</color><scale>6</scale></LabelStyle><IconStyle><Icon></Icon></IconStyle><LineStyle><color>ffff00ff</color><width>5</width></LineStyle></Style>")
+                kml.WriteLine($"<Style id='ITUhighlight'><PolyStyle><color>40ff00ff</color><fill>1</fill><outline>1</outline></PolyStyle><LabelStyle><color>ffff00ff</color><scale>6</scale></LabelStyle><IconStyle><Icon></Icon></IconStyle><LineStyle><color>ffff00ff</color><width>5</width></LineStyle></Style>")
+                kml.WriteLine($"<StyleMap id='ITU'>
+                    <Pair><key>normal</key><styleUrl>#ITUnormal</styleUrl></Pair>
+                    <Pair><key>highlight</key><styleUrl>#ITUhighlight</styleUrl></Pair>
+                    </StyleMap>")
+            Case Else
+                Throw New System.Exception("zone type was not CQ or ITU")
+        End Select
 
-        ' Now do the zone labels
-        kml.WriteLine("<Folder><name>Labels</name><open>0</open>")
-        sql.CommandText = $"SELECT * FROM ZoneLabels WHERE Type='{zone}' ORDER BY zone"
+        sql.CommandText = $"SELECT * FROM ZoneLines WHERE Type='{zone}' ORDER BY zone"
         SQLdr = sql.ExecuteReader
         While SQLdr.Read
-            Dim pnt As MapPoint = Geometry.FromJson(SQLdr("geometry"))        ' retrieve the geometry
-            kml.Write($"<Placemark><visibility>0</visibility><styleUrl>#{zone}</styleUrl><name>{zone} {SQLdr("zone")}</name><Point>")
-            KMLcoordinates(kml, pnt, 1)
-            kml.WriteLine("</Point></Placemark>")
+            kml.WriteLine($"<Placemark><visibility>0</visibility><styleUrl>#{zone}</styleUrl><name>{zone} {SQLdr("zone")}</name>")
+            Dim poly As Polygon = Geometry.FromJson(SQLdr("geometry"))            ' retrieve geometry
+            Dim labelpoint As MapPoint = poly.LabelPoint    ' calculate labelpoint
+            kml.WriteLine("<MultiGeometry>")
+            kml.Write($"<Point>")
+            KMLcoordinates(kml, labelpoint, 1)
+            kml.WriteLine("</Point>")
+            poly = poly.Densify(5)          ' ensure point every 5 degrees
+            KMLPolygon(kml, poly, 2, True)
+            kml.WriteLine("</MultiGeometry>")
+            kml.WriteLine("</Placemark>")
         End While
         SQLdr.Close()
         kml.WriteLine("</Folder>")
@@ -601,7 +610,7 @@ Module KMLExport
         Dim sql As SqliteCommand, SQLdr As SqliteDataReader, timer As New Stopwatch
 
         timer.Start()
-        Form1.AppendText(Form1.TextBox1, "Making IARU folder.")
+        Form1.AppendText(Form1.TextBox1, "Making KML for IARU folder.")
         kml.WriteLine("<Folder><name>IARU regions</name><visibility>0</visibility><open>0</open>")
         kml.WriteLine("<Style id=""IARU""><LineStyle><color>ffffffff</color><width>3</width></LineStyle><LabelStyle><color>ffffffff</color><scale>15</scale></LabelStyle><IconStyle><Icon></Icon></IconStyle></Style>")
         kml.WriteLine("<description>Lines defining IARU boundaries. Data provided by Tim Makins (EI8IC)/</description>")
