@@ -19,6 +19,7 @@
     <PackageReference Include="HtmlAgilityPack" Version="1.11.61" />
     <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="8.0.5" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.5" />
+    <PackageReference Include="Polyliner.Net" Version="1.0.2" />
   </ItemGroup>
 
   <ItemGroup>
