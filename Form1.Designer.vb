@@ -61,7 +61,6 @@ Partial Class Form1
         GeometrySizeTableToolStripMenuItem = New ToolStripMenuItem()
         TestToolStripMenuItem = New ToolStripMenuItem()
         ParseBoxToolStripMenuItem = New ToolStripMenuItem()
-        NormalizeCentralMeridianToolStripMenuItem = New ToolStripMenuItem()
         KMLArcGISToolStripMenuItem = New ToolStripMenuItem()
         TextBox1 = New TextBox()
         ProgressBar1 = New ProgressBar()
@@ -302,7 +301,7 @@ Partial Class Form1
         ' 
         ' TestToolStripMenuItem
         ' 
-        TestToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {ParseBoxToolStripMenuItem, NormalizeCentralMeridianToolStripMenuItem, KMLArcGISToolStripMenuItem})
+        TestToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {ParseBoxToolStripMenuItem, KMLArcGISToolStripMenuItem})
         TestToolStripMenuItem.Name = "TestToolStripMenuItem"
         TestToolStripMenuItem.Size = New Size(39, 20)
         TestToolStripMenuItem.Text = "Test"
@@ -310,19 +309,13 @@ Partial Class Form1
         ' ParseBoxToolStripMenuItem
         ' 
         ParseBoxToolStripMenuItem.Name = "ParseBoxToolStripMenuItem"
-        ParseBoxToolStripMenuItem.Size = New Size(213, 22)
+        ParseBoxToolStripMenuItem.Size = New Size(180, 22)
         ParseBoxToolStripMenuItem.Text = "ParseBox"
-        ' 
-        ' NormalizeCentralMeridianToolStripMenuItem
-        ' 
-        NormalizeCentralMeridianToolStripMenuItem.Name = "NormalizeCentralMeridianToolStripMenuItem"
-        NormalizeCentralMeridianToolStripMenuItem.Size = New Size(213, 22)
-        NormalizeCentralMeridianToolStripMenuItem.Text = "NormalizeCentralMeridian"
         ' 
         ' KMLArcGISToolStripMenuItem
         ' 
         KMLArcGISToolStripMenuItem.Name = "KMLArcGISToolStripMenuItem"
-        KMLArcGISToolStripMenuItem.Size = New Size(213, 22)
+        KMLArcGISToolStripMenuItem.Size = New Size(180, 22)
         KMLArcGISToolStripMenuItem.Text = "KML ArcGIS"
         ' 
         ' TextBox1
@@ -410,7 +403,6 @@ Partial Class Form1
     Friend WithEvents ReportsToolStripMenuItem As ToolStripMenuItem
     Friend WithEvents KMLFileSizeToolStripMenuItem As ToolStripMenuItem
     Friend WithEvents ImportLandSquareListToolStripMenuItem As ToolStripMenuItem
-    Friend WithEvents NormalizeCentralMeridianToolStripMenuItem As ToolStripMenuItem
     Friend WithEvents KMLArcGISToolStripMenuItem As ToolStripMenuItem
     Friend WithEvents FindIARURegionToolStripMenuItem As ToolStripMenuItem
 

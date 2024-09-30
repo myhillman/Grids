@@ -506,7 +506,7 @@ There are some additional folders which are closed by default. You must open the
                 result = mpb.ToGeometry
             End If
         End If
-        If CrossesAntiMeridian(result) Then result = NormalizeCentralMeridian(result)   ' handle the central meridian
+        result = NormalizeAntiMeridian(result)   ' handle the anti meridian
         result = result.Simplify
         result = result.Densify(5)
         Return result
@@ -1391,39 +1391,6 @@ There are some additional folders which are closed by default. You must open the
         Application.DoEvents()
     End Sub
 
-    Private Sub NormalizeCentralMeridianToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles NormalizeCentralMeridianToolStripMenuItem.Click
-        Dim plb As New PolylineBuilder(SpatialReferences.Wgs84)       ' drawn bounding box
-        Dim PolyGbuilder As New PolygonBuilder(SpatialReferences.Wgs84)
-        With plb
-            .AddPoint(New MapPoint(177.17, -19.25))       ' first point
-            .AddPoint(New MapPoint(-179.65, -19.25))
-            .AddPoint(New MapPoint(-179.65, -15.67))
-            .AddPoint(New MapPoint(177.17, -15.67))
-            .AddPoint(New MapPoint(177.17, -19.25))       ' last point
-        End With
-        With PolyGbuilder
-            .AddPoint(New MapPoint(177.17, -19.25))       ' first point
-            .AddPoint(New MapPoint(-179.65, -19.25))
-            .AddPoint(New MapPoint(-179.65, -15.67))
-            .AddPoint(New MapPoint(177.17, -15.67))
-            .AddPoint(New MapPoint(177.17, -19.25))       ' last point
-        End With
-        For i = 0 To plb.Parts(0).Points.Count - 1
-            If plb.Parts(0).Points(i).X < 0 Then
-                plb.Parts(0).SetPoint(i, New MapPoint(plb.Parts(0).Points(i).X + 360, plb.Parts(0).Points(i).Y))   ' add 360 to X
-            End If
-        Next
-        Dim linestring = plb.ToGeometry
-        AppendText(TextBox1, $"linestring Before {linestring}{vbCrLf}")
-        Dim normal = linestring.NormalizeCentralMeridian
-        AppendText(TextBox1, $"linestring After {normal}{vbCrLf}")
-        Dim polyg = PolyGbuilder.ToGeometry
-        AppendText(TextBox1, $"polygon Before {polyg}{vbCrLf}")
-        polyg = polyg.Simplify
-        Dim normalp = polyg.NormalizeCentralMeridian
-        AppendText(TextBox1, $"polygon After {polyg}{vbCrLf}")
-    End Sub
-
     Private Async Sub KMLArcGISToolStripMenuItem_Click(sender As Object, e As EventArgs) Handles KMLArcGISToolStripMenuItem.Click
         Dim sql As SqliteCommand, sqldr As SqliteDataReader
         Const BaseFilename = "DXCC Map"
@@ -1656,6 +1623,5 @@ There are some additional folders which are closed by default. You must open the
             End If
         Next
     End Sub
-
 End Class
 

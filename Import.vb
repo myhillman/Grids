@@ -96,8 +96,12 @@ Module Import
 
         ' fields of zone data
         ' 0 = zone number
-        ' 1 = coordiantes in Google Map format
-
+        ' 1 = coordinates in Google Map format
+        ' 2 = levels ?
+        ' 3 = fill color
+        ' 4 = label lat
+        ' 5 = label lng
+        ' 6 = text ?
         Property fields As List(Of String)
     End Class
     Enum state_enum
@@ -206,8 +210,7 @@ Module Import
                         Next
                         If Not CoIncident(linestr.First, linestr.Last) Then linestr.Add(linestr.First)    ' close polygon
                         Dim poly As New Polygon(linestr)  ' create polygon
-                        poly.Generalize(0.2, True)                  ' reduce number of points
-                        If CrossesAntiMeridian(poly) Then poly = NormalizeCentralMeridian(poly)       ' handle the anti-meridian
+                        poly.Generalize(0.2, False)                  ' reduce number of points
                         poly = poly.Simplify                        ' ensure polygons have correct winding
                         ' Insert into database
                         sql.CommandText = $"INSERT INTO ZoneLines (Type,zone,geometry) VALUES ('{zc.Key}',{CInt(z.fields(0))},'{poly.ToJson}')"

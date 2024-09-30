@@ -295,7 +295,7 @@ Module KMLExport
 
     Function CrossesAntiMeridian(g As Geometry) As Boolean
         ' returns true if geometry crosses anti-meridian
-        Return Math.Abs(g.Extent.XMax - g.Extent.XMin) > 300
+        Return Math.Abs(g.Extent.XMax - g.Extent.XMin) >= 300
     End Function
     Function NormalizeCentralMeridian(PolyBox As Polygon) As Polygon
         ' Normalize a polygon if it crosses the anti-meridian
@@ -341,6 +341,26 @@ Module KMLExport
             Return PolyBox       ' doesn't cross anti-meridian
         End If
 
+    End Function
+    Function NormalizeAntiMeridian(poly As Polygon) As Polygon
+        ' Handle polygons that straddle the anti meridian (+/- 180 degrees)
+        Dim points As New List(Of MapPoint), pg As Polygon
+
+        If poly.Parts.Count = 0 Then Return poly          ' empty polygon
+        pg = poly
+        If CrossesAntiMeridian(pg) Then
+            Dim pgb As New PolygonBuilder(pg.SpatialReference)      ' create a polybuilder to reconstruct the polygon
+            For Each prt In pg.Parts            ' process each part
+                points.Clear()
+                For Each p In prt.Points
+                    Dim lng As Double = If(p.X < 0, p.X + 360, p.X)         ' add 360 to any -ve longitude
+                    points.Add(New MapPoint(lng, p.Y, p.SpatialReference))  ' add modified point to point list
+                Next
+                pgb.AddPart(New Part(points))           ' add the new part to the polygon builder
+            Next
+            pg = pgb.ToGeometry                     ' overwrite original geometry with modified one
+        End If
+        Return pg.Simplify                    ' correct winding direction
     End Function
 
     Const EPS = 0.000001      ' a very small number (epsilon)
@@ -479,12 +499,12 @@ Module KMLExport
                 pgb.AddPoint(New MapPoint(.XMin, .YMin))
             End With
             Dim poly = pgb.ToGeometry
-            If CrossesAntiMeridian(poly) And SQLdr("refno") <> "AN-016" Then poly = NormalizeCentralMeridian(poly)
+            If CrossesAntiMeridian(poly) And SQLdr("refno") <> "AN-016" Then poly = NormalizeAntiMeridian(poly)
             Dim labelpoint As MapPoint = poly.LabelPoint
             With env
                 kml.WriteLine("<MultiGeometry>")
                 kml.Write($"<Point>")
-                KMLcoordinates(kml, labelPoint, 1)
+                KMLcoordinates(kml, labelpoint, 1)
                 kml.WriteLine("</Point>")
                 poly = poly.Densify(5)
                 KMLPolygon(kml, poly, 2, True)
@@ -520,7 +540,7 @@ Module KMLExport
         sql = connect.CreateCommand
         ' Create the folder
         kml.WriteLine($"<Folder><name>{zone} Zones</name><visibility>0</visibility><open>0</open>")
-        kml.WriteLine("<description>Polygons describing {zone} Zones. Based on data created by Elwood Downey (WBØOEW), extracted from http://zone-check.eu/.</description>")
+        kml.WriteLine("<description>Polygons describing {zone} Zones. Based on data extracted from http://zone-check.eu/.</description>")
         Select Case zone
             Case "CQ"
                 ' add styles for hover over polygon
@@ -547,14 +567,17 @@ Module KMLExport
         While SQLdr.Read
             kml.WriteLine($"<Placemark><visibility>0</visibility><styleUrl>#{zone}</styleUrl><name>{zone} {SQLdr("zone")}</name>")
             Dim poly As Polygon = Geometry.FromJson(SQLdr("geometry"))            ' retrieve geometry
-            Dim labelpoint As MapPoint = poly.LabelPoint    ' calculate labelpoint
-            kml.WriteLine("<MultiGeometry>")
-            kml.Write($"<Point>")
-            KMLcoordinates(kml, labelpoint, 1)
-            kml.WriteLine("</Point>")
-            poly = poly.Densify(5)          ' ensure point every 5 degrees
-            KMLPolygon(kml, poly, 2, True)
-            kml.WriteLine("</MultiGeometry>")
+            If poly.Parts.Count > 0 Then
+                Dim labelpoint As MapPoint = poly.LabelPoint    ' calculate labelpoint
+                kml.WriteLine("<MultiGeometry>")
+                kml.Write($"<Point>")
+                KMLcoordinates(kml, labelpoint, 1)
+                kml.WriteLine("</Point>")
+                poly = NormalizeAntiMeridian(poly)
+                poly = poly.Densify(5)          ' ensure point every 5 degrees. Must be performed after NormalizeAntiMeridian
+                KMLPolygon(kml, poly, 2, True)
+                kml.WriteLine("</MultiGeometry>")
+            End If
             kml.WriteLine("</Placemark>")
         End While
         SQLdr.Close()
