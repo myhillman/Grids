@@ -495,7 +495,7 @@ There are some additional folders which are closed by default. You must open the
                 For i = 0 To data.Length - 1 Step 2
                     Debug.Assert(Double.TryParse(data(i), Y), "Badly formed double")
                     Debug.Assert(Double.TryParse(data(i + 1), X), "Badly formed double")
-                    If Not (Between(X, -180, 180) And Between(Y, -90, 90)) Then
+                    If Not (Between(X, -180, 250) And Between(Y, -90, 90)) Then
                         MsgBox($"Bad coordinate lon={X},lat={Y}", vbCritical + vbOKOnly, "Bad coordinate")
                     End If
                     mpb.AddPoint(New MapPoint(CDbl(X), CDbl(Y)))         ' add xy pair
@@ -507,8 +507,8 @@ There are some additional folders which are closed by default. You must open the
             End If
         End If
         result = NormalizeAntiMeridian(result)   ' handle the anti meridian
-        result = result.Simplify
         result = result.Densify(5)
+        result = result.Simplify
         Return result
     End Function
 

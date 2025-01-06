@@ -404,7 +404,8 @@ Module Import
     Async Function ImportIOTAGroups() As Task
         Dim responseString As String = "", sql As SqliteCommand
         ' Get JSON data for all IOTA groups
-        Dim url = $"https://www.iota-world.org/rest/get/iota/groups?api_key={IOTA_API_KEY}"
+        'Dim url = $"https://www.iota-world.org/rest/get/iota/groups?api_key={IOTA_API_KEY}"
+        Dim url = $"https://www.iota-world.org/islands-on-the-air/downloads/download-file.html?path=groups.json"
         Using httpClient As New System.Net.Http.HttpClient()
             httpClient.Timeout = New TimeSpan(0, 10, 0)        ' 10 min timeout
             Try
@@ -417,54 +418,51 @@ Module Import
         End Using
 
         ' Extract groups data
-        Dim response = JsonNode.Parse(responseString)
-        If response!status <> "ok" Then
-            MsgBox($"Error retrieving IOTA data ({response!status})", vbCritical + vbOKOnly, "No data")
-        Else
-            With Form1.ProgressBar1
-                .Minimum = 0
-                .Value = 0
-                .Maximum = response!content.AsArray.Count
-            End With
-            Using connect As New SqliteConnection(Form1.DXCC_DATA)
-                connect.Open()
-                sql = connect.CreateCommand
-                sql.CommandText = "BEGIN TRANSACTION"
-                sql.ExecuteNonQuery()                             ' delete existing data
-                sql.CommandText = "DELETE FROM IOTA_Groups"
-                sql.ExecuteNonQuery()                             ' delete existing data
-                ' use prepared statement for speed
-                sql.CommandText = $"INSERT INTO IOTA_Groups 
+        Dim response = JsonNode.Parse(responseString).AsArray
+        With Form1.ProgressBar1
+            .Minimum = 0
+            .Value = 0
+            .Maximum = response.Count
+        End With
+        Using connect As New SqliteConnection(Form1.DXCC_DATA)
+            connect.Open()
+            sql = connect.CreateCommand
+            sql.CommandText = "BEGIN TRANSACTION"
+            sql.ExecuteNonQuery()                             ' delete existing data
+            sql.CommandText = "DELETE FROM IOTA_Groups"
+            sql.ExecuteNonQuery()                             ' delete existing data
+            ' use prepared statement for speed
+            sql.CommandText = $"INSERT INTO IOTA_Groups 
         (`refno`,`name`,`dxcc_num`,latitude_max,latitude_min,longitude_max,longitude_min,grp_region,whitelist,comment) VALUES (@refno,@name,@dxcc_num,@latitude_max,@latitude_min,@longitude_max,@longitude_min,@grp_region,@whitelist,@comment)
 "
-                sql.Prepare()
-                For Each group In response!content.AsArray
-                    ' process each group
-                    Form1.ProgressBar1.Value += 1
-                    With sql.Parameters
-                        .Clear()
-                        .AddWithValue("@refno", group.Item("refno").ToString)
-                        .AddWithValue("@dxcc_num", group.Item("dxcc_num").ToString)
-                        .AddWithValue("@name", group.Item("name").ToString)
-                        .AddWithValue("@latitude_min", group.Item("latitude_min").ToString)
-                        .AddWithValue("@latitude_max", group.Item("latitude_max").ToString)
-                        .AddWithValue("@longitude_min", group.Item("longitude_min").ToString)
-                        .AddWithValue("@longitude_max", group.Item("longitude_max").ToString)
-                        .AddWithValue("@grp_region", group.Item("grp_region").ToString)
-                        .AddWithValue("@whitelist", group.Item("whitelist").ToString)
-                        .AddWithValue("@comment", group.Item("comment").ToString)
-                    End With
-                    sql.ExecuteNonQuery()
-                Next
-                sql.CommandText = "COMMIT"
+            sql.Prepare()
+            For Each group In response
+                ' process each group
+                Form1.ProgressBar1.Value += 1
+                With sql.Parameters
+                    .Clear()
+                    .AddWithValue("@refno", group.Item("refno").ToString)
+                    .AddWithValue("@dxcc_num", group.Item("dxcc_num").ToString)
+                    .AddWithValue("@name", group.Item("name").ToString)
+                    .AddWithValue("@latitude_min", group.Item("latitude_min").ToString)
+                    .AddWithValue("@latitude_max", group.Item("latitude_max").ToString)
+                    .AddWithValue("@longitude_min", group.Item("longitude_min").ToString)
+                    .AddWithValue("@longitude_max", group.Item("longitude_max").ToString)
+                    .AddWithValue("@grp_region", group.Item("grp_region").ToString)
+                    .AddWithValue("@whitelist", group.Item("whitelist").ToString)
+                    .AddWithValue("@comment", group.Item("comment").ToString)
+                End With
                 sql.ExecuteNonQuery()
-            End Using
-        End If
+            Next
+            sql.CommandText = "COMMIT"
+            sql.ExecuteNonQuery()
+        End Using
     End Function
     Async Function ImportIOTAIslands() As Task
         Dim responseString As String = "", sql As SqliteCommand
         ' Get JSON data for all IOTA groups
-        Dim url = $"https://www.iota-world.org/rest/get/iota/islands?api_key={IOTA_API_KEY}"
+        'Dim url = $"https://www.iota-world.org/rest/get/iota/islands?api_key={IOTA_API_KEY}"
+        Dim url = $"https://www.iota-world.org/islands-on-the-air/downloads/download-file.html?path=islands.json"
         Using httpClient As New System.Net.Http.HttpClient()
             httpClient.Timeout = New TimeSpan(0, 10, 0)        ' 10 min timeout
             Try
@@ -477,45 +475,43 @@ Module Import
         End Using
 
         ' Extract groups data
-        Dim response = JsonNode.Parse(responseString)
-        If response!status <> "ok" Then
-            MsgBox($"Error retrieving IOTA data ({response!status})", vbCritical + vbOKOnly, "No data")
-        Else
-            With Form1.ProgressBar1
-                .Minimum = 0
-                .Value = 0
-                .Maximum = response!content.AsArray.Count
-            End With
-            Using connect As New SqliteConnection(Form1.DXCC_DATA)
-                connect.Open()
-                sql = connect.CreateCommand
-                sql.CommandText = "BEGIN TRANSACTION"
-                sql.ExecuteNonQuery()                             ' delete existing data
-                sql.CommandText = "DELETE FROM IOTA_Islands"
-                sql.ExecuteNonQuery()                             ' delete existing data
-                ' use prepared statement for speed
-                sql.CommandText = $"INSERT INTO IOTA_Islands (`refno`,`name`,`comment`) VALUES (@refno,@name,@comment)"
-                sql.Prepare()
-                For Each group In response!content.AsArray
-                    ' process each group
-                    Form1.ProgressBar1.Value += 1
-                    With sql.Parameters
-                        .Clear()
-                        .AddWithValue("@refno", group.Item("refno").ToString)
-                        .AddWithValue("@name", group.Item("name").ToString)
-                        .AddWithValue("@comment", group.Item("comment").ToString)
-                    End With
-                    sql.ExecuteNonQuery()
-                Next
-                sql.CommandText = "COMMIT"
+        Dim response = JsonNode.Parse(responseString).AsArray
+
+        With Form1.ProgressBar1
+            .Minimum = 0
+            .Value = 0
+            .Maximum = response.Count
+        End With
+        Using connect As New SqliteConnection(Form1.DXCC_DATA)
+            connect.Open()
+            sql = connect.CreateCommand
+            sql.CommandText = "BEGIN TRANSACTION"
+            sql.ExecuteNonQuery()                             ' delete existing data
+            sql.CommandText = "DELETE FROM IOTA_Islands"
+            sql.ExecuteNonQuery()                             ' delete existing data
+            ' use prepared statement for speed
+            sql.CommandText = $"INSERT INTO IOTA_Islands (`refno`,`name`,`comment`) VALUES (@refno,@name,@comment)"
+            sql.Prepare()
+            For Each group In response
+                ' process each group
+                Form1.ProgressBar1.Value += 1
+                With sql.Parameters
+                    .Clear()
+                    .AddWithValue("@refno", group.Item("refno").ToString)
+                    .AddWithValue("@name", group.Item("name").ToString)
+                    .AddWithValue("@comment", group.Item("comment").ToString)
+                End With
                 sql.ExecuteNonQuery()
-            End Using
-        End If
+            Next
+            sql.CommandText = "COMMIT"
+            sql.ExecuteNonQuery()
+        End Using
     End Function
     Async Function ImportIOTADXCCMatchesOneIOTA() As Task
         Dim responseString As String = "", sql As SqliteCommand
         ' Get JSON data for all IOTA groups
-        Dim url = $"https://www.iota-world.org/rest/get/iota/dxccmatchesoneiota?api_key={IOTA_API_KEY}"
+        'Dim url = $"https://www.iota-world.org/rest/get/iota/dxccmatchesoneiota?api_key={IOTA_API_KEY}"
+        Dim url = $"https://www.iota-world.org/islands-on-the-air/downloads/download-file.html?path=dxcc_matches_one_iota.json"
         Using httpClient As New System.Net.Http.HttpClient()
             httpClient.Timeout = New TimeSpan(0, 10, 0)        ' 10 min timeout
             Try
@@ -528,39 +524,35 @@ Module Import
         End Using
 
         ' Extract groups data
-        Dim response = JsonNode.Parse(responseString)
-        If response!status <> "ok" Then
-            MsgBox($"Error retrieving IOTA data ({response!status})", vbCritical + vbOKOnly, "No data")
-        Else
-            With Form1.ProgressBar1
-                .Minimum = 0
-                .Value = 0
-                .Maximum = response!content.AsArray.Count
-            End With
-            Using connect As New SqliteConnection(Form1.DXCC_DATA)
-                connect.Open()
-                sql = connect.CreateCommand
-                sql.CommandText = "BEGIN TRANSACTION"
-                sql.ExecuteNonQuery()                             ' delete existing data
-                sql.CommandText = "DELETE FROM IOTA_DXCC_IOTA"
-                sql.ExecuteNonQuery()                             ' delete existing data
-                ' use prepared statement for speed
-                sql.CommandText = $"INSERT INTO IOTA_DXCC_IOTA (`refno`,`dxcc_num`) VALUES (@refno,@dxcc_num)"
-                sql.Prepare()
-                For Each group In response!content.AsArray
-                    ' process each group
-                    Form1.ProgressBar1.Value += 1
-                    With sql.Parameters
-                        .Clear()
-                        .AddWithValue("@refno", group.Item("refno").ToString)
-                        .AddWithValue("@dxcc_num", group.Item("dxcc_num").ToString)
-                    End With
-                    sql.ExecuteNonQuery()
-                Next
-                sql.CommandText = "COMMIT"
+        Dim response = JsonNode.Parse(responseString).AsArray
+        With Form1.ProgressBar1
+            .Minimum = 0
+            .Value = 0
+            .Maximum = response.Count
+        End With
+        Using connect As New SqliteConnection(Form1.DXCC_DATA)
+            connect.Open()
+            sql = connect.CreateCommand
+            sql.CommandText = "BEGIN TRANSACTION"
+            sql.ExecuteNonQuery()                             ' delete existing data
+            sql.CommandText = "DELETE FROM IOTA_DXCC_IOTA"
+            sql.ExecuteNonQuery()                             ' delete existing data
+            ' use prepared statement for speed
+            sql.CommandText = $"INSERT INTO IOTA_DXCC_IOTA (`refno`,`dxcc_num`) VALUES (@refno,@dxcc_num)"
+            sql.Prepare()
+            For Each group In response
+                ' process each group
+                Form1.ProgressBar1.Value += 1
+                With sql.Parameters
+                    .Clear()
+                    .AddWithValue("@refno", group.Item("refno").ToString)
+                    .AddWithValue("@dxcc_num", group.Item("dxcc_num").ToString)
+                End With
                 sql.ExecuteNonQuery()
-            End Using
-        End If
+            Next
+            sql.CommandText = "COMMIT"
+            sql.ExecuteNonQuery()
+        End Using
     End Function
 
     Sub ImportPolyFromKML()

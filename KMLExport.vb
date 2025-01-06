@@ -499,7 +499,7 @@ Module KMLExport
                 pgb.AddPoint(New MapPoint(.XMin, .YMin))
             End With
             Dim poly = pgb.ToGeometry
-            If CrossesAntiMeridian(poly) And SQLdr("refno") <> "AN-016" Then poly = NormalizeAntiMeridian(poly)
+            If SQLdr("refno") <> "AN-016" Then poly = NormalizeAntiMeridian(poly)
             Dim labelpoint As MapPoint = poly.LabelPoint
             With env
                 kml.WriteLine("<MultiGeometry>")
