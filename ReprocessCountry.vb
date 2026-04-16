@@ -1,4 +1,5 @@
 ﻿Imports System.IO
+Imports System.Data
 Imports Microsoft.Data.Sqlite
 
 Public Class ReprocessCountry
@@ -20,17 +21,23 @@ Public Class ReprocessCountry
                 For ndx = 1 To ListBox1.Items.Count - 1
                     value = datasource.Rows(ndx).Item("value")
                     display = datasource.Rows(ndx).Item("display")
-                    DXCClist.Add(display, value)
+                    If value > 0 Then DXCClist.Add(display, value)    ' add all values to list except the separators (value=-1)
                 Next
             Else
                 ' add just the selected one
                 value = datasource.Rows(ListBox1.SelectedIndex).Item("value")
                 display = datasource.Rows(ListBox1.SelectedIndex).Item("display")
-                DXCClist.Add(display, value)        ' add selected value to list
+                If value > 0 Then DXCClist.Add(display, value)        ' add selected value to list
             End If
         End If
         ' Now reprocess the list of DXCC
-        Using connect As New SqliteConnection(Form1.DXCC_DATA)
+        If DXCClist.Count = 0 Then
+            MessageBox.Show("No country selected")
+            Me.DialogResult = System.Windows.Forms.DialogResult.Cancel
+            Me.Close()
+            Exit Sub
+        End If
+        Using connect As New SqliteConnection(DXCC_DATA)
             connect.Open()
             sql = connect.CreateCommand
             For Each n In DXCClist
@@ -38,13 +45,18 @@ Public Class ReprocessCountry
                 sql.CommandText = $"UPDATE `DXCC` SET `geometry`=NULL WHERE `DXCCnum`={n.Value}"
                 sql.ExecuteNonQuery()
                 ' get the OSM data
-                Await Form1.CreateGrids(connect, n.Key)
-                ' remake KML file
-                Dim kml As New StreamWriter($"{Application.StartupPath}\KML\DXCC_{n.Key}.kml", False)
-                kml.WriteLine(Form1.KMLheader)
-                KMLlist(connect, kml, New List(Of Integer) From {n.Value})
-                kml.WriteLine(Form1.KMLfooter)
-                kml.Close()
+                Dim GeomOK As Boolean = True
+                If Me.cbDontRemake.Checked = False Then
+                    GeomOK = Await CreateGrids(connect, n.Key)
+                End If
+                If GeomOK Then
+                    ' remake KML file if geometry is OK
+                    Dim kml As New StreamWriter(Path.Combine(Application.StartupPath, "KML", $"DXCC_{n.Key}.kml"), False)
+                    kml.WriteLine(KMLheader)
+                    KMLlist(connect, kml, New List(Of Integer) From {n.Value})
+                    kml.WriteLine(KMLfooter)
+                    kml.Close()
+                End If
             Next
         End Using
         Me.DialogResult = System.Windows.Forms.DialogResult.OK
@@ -58,7 +70,7 @@ Public Class ReprocessCountry
 
     Private Sub ReprocessCountry_Load(sender As Object, e As EventArgs) Handles MyBase.Load
         Dim sql As SqliteCommand, SQLdr As SqliteDataReader, DXCClist As New List(Of Integer)
-        Using connect As New SqliteConnection(Form1.DXCC_DATA)
+        Using connect As New SqliteConnection(DXCC_DATA)
             datasource.Clear()
             datasource.Columns.Add("display", GetType(String))
             datasource.Columns.Add("value", GetType(Integer))

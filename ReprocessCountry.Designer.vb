@@ -26,6 +26,7 @@ Partial Class ReprocessCountry
         OK_Button = New Button()
         Cancel_Button = New Button()
         ListBox1 = New ListBox()
+        cbDontRemake = New CheckBox()
         TableLayoutPanel1.SuspendLayout()
         SuspendLayout()
         ' 
@@ -77,6 +78,16 @@ Partial Class ReprocessCountry
         ListBox1.Size = New Size(1517, 589)
         ListBox1.TabIndex = 1
         ' 
+        ' cbDontRemake
+        ' 
+        cbDontRemake.AutoSize = True
+        cbDontRemake.Location = New Point(1186, 620)
+        cbDontRemake.Name = "cbDontRemake"
+        cbDontRemake.Size = New Size(151, 19)
+        cbDontRemake.TabIndex = 2
+        cbDontRemake.Text = "Don't remake geometry"
+        cbDontRemake.UseVisualStyleBackColor = True
+        ' 
         ' ReprocessCountry
         ' 
         AcceptButton = OK_Button
@@ -84,6 +95,7 @@ Partial Class ReprocessCountry
         AutoScaleMode = AutoScaleMode.Font
         CancelButton = Cancel_Button
         ClientSize = New Size(1547, 659)
+        Controls.Add(cbDontRemake)
         Controls.Add(ListBox1)
         Controls.Add(TableLayoutPanel1)
         FormBorderStyle = FormBorderStyle.FixedDialog
@@ -96,11 +108,13 @@ Partial Class ReprocessCountry
         Text = "ReprocessCountry"
         TableLayoutPanel1.ResumeLayout(False)
         ResumeLayout(False)
+        PerformLayout()
 
     End Sub
     Friend WithEvents TableLayoutPanel1 As System.Windows.Forms.TableLayoutPanel
     Friend WithEvents OK_Button As System.Windows.Forms.Button
     Friend WithEvents Cancel_Button As System.Windows.Forms.Button
     Friend WithEvents ListBox1 As ListBox
+    Friend WithEvents cbDontRemake As CheckBox
 
 End Class

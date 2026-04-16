@@ -55,6 +55,7 @@ Partial Class Form1
         InnerRingsToolStripMenuItem = New ToolStripMenuItem()
         AdjacentColorCheckToolStripMenuItem = New ToolStripMenuItem()
         FindIARURegionToolStripMenuItem = New ToolStripMenuItem()
+        ValidateOSMQueriesToolStripMenuItem = New ToolStripMenuItem()
         ReportsToolStripMenuItem = New ToolStripMenuItem()
         KMLFileSizeToolStripMenuItem = New ToolStripMenuItem()
         EntityReportToolStripMenuItem = New ToolStripMenuItem()
@@ -62,6 +63,9 @@ Partial Class Form1
         TestToolStripMenuItem = New ToolStripMenuItem()
         ParseBoxToolStripMenuItem = New ToolStripMenuItem()
         KMLArcGISToolStripMenuItem = New ToolStripMenuItem()
+        ConvertOPToToolStripMenuItem = New ToolStripMenuItem()
+        MakeBboxKMLToolStripMenuItem = New ToolStripMenuItem()
+        TestAATToolStripMenuItem = New ToolStripMenuItem()
         TextBox1 = New TextBox()
         ProgressBar1 = New ProgressBar()
         DummyToolStripMenuItem = New ToolStripMenuItem()
@@ -192,19 +196,19 @@ Partial Class Form1
         ' ImportIOTAGroupsToolStripMenuItem
         ' 
         ImportIOTAGroupsToolStripMenuItem.Name = "ImportIOTAGroupsToolStripMenuItem"
-        ImportIOTAGroupsToolStripMenuItem.Size = New Size(269, 22)
+        ImportIOTAGroupsToolStripMenuItem.Size = New Size(271, 22)
         ImportIOTAGroupsToolStripMenuItem.Text = "Import IOTA Groups"
         ' 
         ' ImportIOTAIslandsToolStripMenuItem
         ' 
         ImportIOTAIslandsToolStripMenuItem.Name = "ImportIOTAIslandsToolStripMenuItem"
-        ImportIOTAIslandsToolStripMenuItem.Size = New Size(269, 22)
+        ImportIOTAIslandsToolStripMenuItem.Size = New Size(271, 22)
         ImportIOTAIslandsToolStripMenuItem.Text = "Import IOTA Islands"
         ' 
         ' ImportIOTADXCCMatchesOneIOTAToolStripMenuItem
         ' 
         ImportIOTADXCCMatchesOneIOTAToolStripMenuItem.Name = "ImportIOTADXCCMatchesOneIOTAToolStripMenuItem"
-        ImportIOTADXCCMatchesOneIOTAToolStripMenuItem.Size = New Size(269, 22)
+        ImportIOTADXCCMatchesOneIOTAToolStripMenuItem.Size = New Size(271, 22)
         ImportIOTADXCCMatchesOneIOTAToolStripMenuItem.Text = "Import IOTA DXCC matches one IOTA"
         ' 
         ' ImportAntarcticaToolStripMenuItem
@@ -227,7 +231,7 @@ Partial Class Form1
         ' 
         ' ChecksToolStripMenuItem
         ' 
-        ChecksToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {CheckISO3166ReferencesToolStripMenuItem, CountryCollisionsToolStripMenuItem, RemoveEmptyGeometryToolStripMenuItem, IOTACheckToolStripMenuItem, InnerRingsToolStripMenuItem, AdjacentColorCheckToolStripMenuItem, FindIARURegionToolStripMenuItem})
+        ChecksToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {CheckISO3166ReferencesToolStripMenuItem, CountryCollisionsToolStripMenuItem, RemoveEmptyGeometryToolStripMenuItem, IOTACheckToolStripMenuItem, InnerRingsToolStripMenuItem, AdjacentColorCheckToolStripMenuItem, FindIARURegionToolStripMenuItem, ValidateOSMQueriesToolStripMenuItem})
         ChecksToolStripMenuItem.Name = "ChecksToolStripMenuItem"
         ChecksToolStripMenuItem.Size = New Size(57, 20)
         ChecksToolStripMenuItem.Text = "Checks"
@@ -274,6 +278,12 @@ Partial Class Form1
         FindIARURegionToolStripMenuItem.Size = New Size(209, 22)
         FindIARURegionToolStripMenuItem.Text = "Find IARU region"
         ' 
+        ' ValidateOSMQueriesToolStripMenuItem
+        ' 
+        ValidateOSMQueriesToolStripMenuItem.Name = "ValidateOSMQueriesToolStripMenuItem"
+        ValidateOSMQueriesToolStripMenuItem.Size = New Size(209, 22)
+        ValidateOSMQueriesToolStripMenuItem.Text = "Validate OSM queries"
+        ' 
         ' ReportsToolStripMenuItem
         ' 
         ReportsToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {KMLFileSizeToolStripMenuItem, EntityReportToolStripMenuItem, GeometrySizeTableToolStripMenuItem})
@@ -301,22 +311,40 @@ Partial Class Form1
         ' 
         ' TestToolStripMenuItem
         ' 
-        TestToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {ParseBoxToolStripMenuItem, KMLArcGISToolStripMenuItem})
+        TestToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {ParseBoxToolStripMenuItem, KMLArcGISToolStripMenuItem, ConvertOPToToolStripMenuItem, MakeBboxKMLToolStripMenuItem, TestAATToolStripMenuItem})
         TestToolStripMenuItem.Name = "TestToolStripMenuItem"
-        TestToolStripMenuItem.Size = New Size(39, 20)
+        TestToolStripMenuItem.Size = New Size(40, 20)
         TestToolStripMenuItem.Text = "Test"
         ' 
         ' ParseBoxToolStripMenuItem
         ' 
         ParseBoxToolStripMenuItem.Name = "ParseBoxToolStripMenuItem"
-        ParseBoxToolStripMenuItem.Size = New Size(180, 22)
+        ParseBoxToolStripMenuItem.Size = New Size(197, 22)
         ParseBoxToolStripMenuItem.Text = "ParseBox"
         ' 
         ' KMLArcGISToolStripMenuItem
         ' 
         KMLArcGISToolStripMenuItem.Name = "KMLArcGISToolStripMenuItem"
-        KMLArcGISToolStripMenuItem.Size = New Size(180, 22)
+        KMLArcGISToolStripMenuItem.Size = New Size(197, 22)
         KMLArcGISToolStripMenuItem.Text = "KML ArcGIS"
+        ' 
+        ' ConvertOPToToolStripMenuItem
+        ' 
+        ConvertOPToToolStripMenuItem.Name = "ConvertOPToToolStripMenuItem"
+        ConvertOPToToolStripMenuItem.Size = New Size(197, 22)
+        ConvertOPToToolStripMenuItem.Text = "Convert OP to relations"
+        ' 
+        ' MakeBboxKMLToolStripMenuItem
+        ' 
+        MakeBboxKMLToolStripMenuItem.Name = "MakeBboxKMLToolStripMenuItem"
+        MakeBboxKMLToolStripMenuItem.Size = New Size(197, 22)
+        MakeBboxKMLToolStripMenuItem.Text = "Make bbox KML"
+        ' 
+        ' TestAATToolStripMenuItem
+        ' 
+        TestAATToolStripMenuItem.Name = "TestAATToolStripMenuItem"
+        TestAATToolStripMenuItem.Size = New Size(197, 22)
+        TestAATToolStripMenuItem.Text = "Test AAT"
         ' 
         ' TextBox1
         ' 
@@ -356,7 +384,6 @@ Partial Class Form1
         Name = "Form1"
         Text = "Grids"
         MenuStrip1.ResumeLayout(False)
-        MenuStrip1.PerformLayout()
         ResumeLayout(False)
         PerformLayout()
     End Sub
@@ -405,5 +432,10 @@ Partial Class Form1
     Friend WithEvents ImportLandSquareListToolStripMenuItem As ToolStripMenuItem
     Friend WithEvents KMLArcGISToolStripMenuItem As ToolStripMenuItem
     Friend WithEvents FindIARURegionToolStripMenuItem As ToolStripMenuItem
+    Friend WithEvents ConvertOPToToolStripMenuItem As ToolStripMenuItem
+    Friend WithEvents MakeBboxKMLToolStripMenuItem As ToolStripMenuItem
+    Friend WithEvents ValidateOSMQueriesToolStripMenuItem As ToolStripMenuItem
+    Friend WithEvents TestAATToolStripMenuItem As ToolStripMenuItem
+
 
 End Class

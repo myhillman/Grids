@@ -6,7 +6,7 @@ Public Class KMLbyCQ
     Private Sub KMLbyCQ_Load(sender As Object, e As EventArgs) Handles Me.Load
         ' fetch list of all CQ zones used to populate listbox
         Dim sql As SqliteCommand, SQLdr As SqliteDataReader, CQzones As New List(Of Integer)
-        Using connect As New SqliteConnection(Form1.DXCC_DATA),
+        Using connect As New SqliteConnection(DXCC_DATA),
             kml As New StreamWriter($"{Application.StartupPath}\DXCC.kml", False)
             connect.Open()
             sql = connect.CreateCommand
@@ -14,7 +14,7 @@ Public Class KMLbyCQ
             SQLdr = sql.ExecuteReader
             ' Read all CQ zones, and then build list of all zones
             While SQLdr.Read
-                If Not Form1.IsDBNullorEmpty(SQLdr("CQ")) Then
+                If Not IsDBNullorEmpty(SQLdr("CQ")) Then
                     Dim zones = SQLdr("CQ")       ' a list of CQ zones
                     Dim zone = Split(zones, ",")
                     ' zones could be listed as n-m or just n in CSV list
@@ -51,7 +51,7 @@ Public Class KMLbyCQ
         Dim sql As SqliteCommand, SQLdr As SqliteDataReader, DXCClist As New List(Of Integer), CQzoneList As New List(Of Integer)
 
         If ListBox1.SelectedItem IsNot Nothing Then
-            Using connect As New SqliteConnection(Form1.DXCC_DATA)
+            Using connect As New SqliteConnection(DXCC_DATA)
                 connect.Open()
                 connect.CreateFunction("within", Function(A As Integer, B As String) Within(A, B))           ' find CQ zone within list
                 sql = connect.CreateCommand
@@ -73,7 +73,7 @@ Public Class KMLbyCQ
 
                 For Each CQ In CQzoneList
                     'Form1.ProgressBar1.Value += 1
-                    Form1.AppendText(Form1.TextBox1, $"Making CQ zone {CQ}{vbCrLf}")
+                    AppendText(Form1.TextBox1, $"Making CQ zone {CQ}{vbCrLf}")
                     DXCClist.Clear()
                     Application.DoEvents()
                     Dim kml As New StreamWriter($"{Application.StartupPath}\KML\CQ_Zone_{CQ}.kml", False)
@@ -83,12 +83,12 @@ Public Class KMLbyCQ
                         DXCClist.Add(SQLdr("DXCCnum"))
                     End While
                     SQLdr.Close()
-                    kml.WriteLine(Form1.KMLheader)
+                    kml.WriteLine(KMLheader)
                     KMLlist(connect, kml, DXCClist)
-                    kml.WriteLine(Form1.KMLfooter)
+                    kml.WriteLine(KMLfooter)
                     kml.Close()
                 Next
-                Form1.AppendText(Form1.TextBox1, $"Done{vbCrLf}")
+                AppendText(Form1.TextBox1, $"Done{vbCrLf}")
             End Using
         End If
     End Sub

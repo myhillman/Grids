@@ -1,39 +1,48 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
-    <StartupObject>Sub Main</StartupObject>
+    <RootNamespace></RootNamespace>
+    <TargetFramework>net8.0-windows8.0</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
-    <MyType>WindowsForms</MyType>
+	<WinFormsProjectSubtype>WindowsForms</WinFormsProjectSubtype>
+	<MyType>WindowsForms</MyType>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <ApplicationIcon>earth-globe-grid-green_256.ico</ApplicationIcon>
+    <EnableMySupport>true</EnableMySupport>
   </PropertyGroup>
 
   <ItemGroup>
-    <Import Include="System.Data" />
-    <Import Include="System.Drawing" />
-    <Import Include="System.Windows.Forms" />
+    <Content Include="earth-globe-grid-green_256.ico" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Esri.ArcGISRuntime" Version="200.4.0" />
-    <PackageReference Include="HtmlAgilityPack" Version="1.11.61" />
-    <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="8.0.5" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.5" />
+    <PackageReference Include="Clipper2" Version="2.0.0" />
+    <PackageReference Include="DotNetDBF" Version="7.0.1" />
+    <PackageReference Include="DotSpatial.Data" Version="4.0.656" />
+    <PackageReference Include="Esri.ArcGISRuntime" Version="200.8.1" />
+    <PackageReference Include="HtmlAgilityPack" Version="1.12.4" />
+    <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="10.0.5" />
+    <PackageReference Include="NetTopologySuite" Version="2.6.0" />
+    <PackageReference Include="NetTopologySuite.IO.Esri.Shapefile" Version="1.2.0" />
+    <PackageReference Include="NetTopologySuite.IO.GeoJSON" Version="4.0.0" />
+    <PackageReference Include="OsmSharp" Version="5.0.8" />
     <PackageReference Include="Polyliner.Net" Version="1.0.2" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.2" />
+    <PackageReference Include="System.Text.RegularExpressions" Version="4.3.1" />
   </ItemGroup>
+  
+<ItemGroup>
+  <Compile Update="Form1.vb" />
 
-  <ItemGroup>
-    <Compile Update="My Project\Application.Designer.vb">
-      <DesignTime>True</DesignTime>
-      <AutoGen>True</AutoGen>
-      <DependentUpon>Application.myapp</DependentUpon>
-    </Compile>
-    <Compile Update="My Project\Resources.Designer.vb">
-      <DesignTime>True</DesignTime>
-      <AutoGen>True</AutoGen>
-      <DependentUpon>Resources.resx</DependentUpon>
-    </Compile>
-  </ItemGroup>
+  <Compile Update="Form1.Designer.vb">
+    <DependentUpon>Form1.vb</DependentUpon>
+  </Compile>
+
+  <EmbeddedResource Update="Form1.resx">
+    <DependentUpon>Form1.vb</DependentUpon>
+  </EmbeddedResource>
+</ItemGroup>
 
   <ItemGroup>
     <EmbeddedResource Update="My Project\Resources.resx">
@@ -44,46 +53,33 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="border.kml">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="CQ.kml">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="DXCC.cpg">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="DXCC.dbf">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="DXCC.prj">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="DXCC.shp">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="DXCC.shx">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="DXCC.sqlite">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="ISO3166.csv">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="ITU.kml">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
+    <Import Include="Microsoft.Data.Sqlite" />
+    <Import Include="System.Data" />
+    <Import Include="System.Drawing" />
+    <Import Include="System.Resources" />
+    <Import Include="System.Resources.Extensions" />
+    <Import Include="System.Runtime" />
+    <Import Include="System.Runtime.CompilerServices" />
+    <Import Include="System.Windows.Forms" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <None Update="BorderEUAS.kml" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="CQ.kml" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="DXCC.cpg" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="DXCC.dbf" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="DXCC.prj" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="DXCC.shp" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="DXCC.shx" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="DXCC.sqlite" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="ISO3166.csv" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="ITU.kml" CopyToOutputDirectory="PreserveNewest" />
     <None Update="My Project\Application.myapp">
       <Generator>MyApplicationCodeGenerator</Generator>
       <LastGenOutput>Application.Designer.vb</LastGenOutput>
     </None>
-    <None Update="world-administrative-boundaries.geojson">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="world-administrative-boundaries.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
+    <None Update="world-administrative-boundaries.geojson" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="world-administrative-boundaries.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
