@@ -1,11 +1,10 @@
 ﻿Imports System.IO
 Imports System.IO.Compression
 Imports System.Text
-Imports System.Windows.Forms.VisualStyles.VisualStyleElement
 Imports System.Xml
 Imports System.Xml.XPath
+Imports System.Linq
 Imports Esri.ArcGISRuntime.Geometry
-Imports Esri.ArcGISRuntime.Ogc
 Imports Microsoft.Data.Sqlite
 
 Module KMLExport
@@ -202,22 +201,26 @@ Module KMLExport
         While SQLdr.Read
             Dim entity = SafeStr(SQLdr("Entity"))
             Dim bbox = ParseBBoxOrPoly(SQLdr("bbox"))       ' box could be envelope, polygon or 2 polygon
-            If entity = "Fiji" Then
-                Dim poly As Polygon = bbox
-                For Each Prt In poly.Parts
-                    Dim area = PolygonArea(Prt.Points)
-                    AppendText(Form1.TextBox1, $"Fiji box area: {area}{vbCrLf}")
-                Next
-            End If
             If TypeOf bbox Is Polygon Then
                 Dim poly As Polygon = bbox
                 If poly.Parts.Count > 1 Then
-                    AppendText(Form1.TextBox1, $"bbox For {SQLdr("Entity")} crosses anti-meridian{vbCrLf}")
+                    AppendText(Form1.TextBox1, $"bbox For {entity} crosses anti-meridian and has {poly.Parts.Count} parts{vbCrLf}")
+                    For each prt In poly.Parts
+                        AppendText(Form1.TextBox1,$"Area = {PolygonArea(prt.points)}{vbCrLf}")
+                    Next
                 End If
             End If
             ' Display bounding box 
-            bbox = bbox.Densify(DensifyDegrees)      ' Densify the bounding box so that it clearly follows lat/lon lines better. 
-            bbox = FixRingOrientation(bbox)   ' Densify messes up polygons
+            bbox = DensifyCleanMergeOrient(bbox, DensifyDegrees)
+            If TypeOf bbox Is Polygon Then
+                Dim poly As Polygon = bbox
+                If poly.Parts.Count > 1 Then
+                    AppendText(Form1.TextBox1, $"bbox For {entity} crosses anti-meridian and has {poly.Parts.Count} parts{vbCrLf}")
+                    For each prt In poly.Parts
+                        AppendText(Form1.TextBox1,$"Area = {PolygonArea(prt.points)}{vbCrLf}")
+                    Next
+                End If
+            End If
             WritePolygonWithHoverName(kml, entity, bbox)
         End While
         SQLdr.Close()
@@ -294,44 +297,74 @@ Module KMLExport
     End Sub
 
     Sub KMLPolygon(kml As StreamWriter, poly As Polygon, digits As Integer, MultiGeometryOpen As Boolean)
-        ' Write a polygon to the kml file
-        Dim tagstack As New Stack(Of String)
-        If poly.Parts.Count > 1 And Not MultiGeometryOpen Then kml.WriteLine("<MultiGeometry>")
-        Dim i = 0
-        For Each Prt In poly.Parts
-            Dim area = PolygonArea(Prt.Points)     ' determine inner or outer by testing polygon area
-            ' inner rings are negative area, outer rings are positive area. This is a standard GIS convention. See https://en.wikipedia.org/wiki/Polygon#Orientation_and_holes
-            If area < 0 Then
-                ' It's an inner boundary
-                kml.WriteLine("<innerBoundaryIs>")
-                tagstack.Push("</innerBoundaryIs>")
-            Else
-                ' It's an outer boundary. Finish previous polygon, if any, and start a new one
-                While (tagstack.Count > 0)
-                    kml.WriteLine(tagstack.Pop)     ' empty the stack
-                End While
-                kml.WriteLine("<Polygon><tessellate>1</tessellate>")
-                tagstack.Push("</Polygon>")
-                kml.WriteLine("<outerBoundaryIs>")
-                tagstack.Push("</outerBoundaryIs>") ' push end tag
+
+    Dim parts = poly.Parts.ToList()
+
+    ' Count outer rings (clockwise)
+    Dim outerCount As Integer = 0
+    For Each prt In parts
+        If PolygonArea(prt.Points) > 0 Then outerCount += 1
+    Next
+
+    ' If more than one outer ring → MultiGeometry
+    Dim useMulti As Boolean = (outerCount > 1 AndAlso Not MultiGeometryOpen)
+    If useMulti Then kml.WriteLine("<MultiGeometry>")
+
+    Dim polygonOpen As Boolean = False
+
+    For Each prt In parts
+
+        Dim area = PolygonArea(prt.Points)
+        Dim isOuter As Boolean = (area > 0)
+
+        If isOuter Then
+
+            ' Close previous polygon if open
+            If polygonOpen Then
+                kml.WriteLine("</Polygon>")
             End If
-            ' Now write the boundary (inner or outer)
+
+            ' Start new polygon
+            kml.WriteLine("<Polygon><tessellate>1</tessellate>")
+            kml.WriteLine("<outerBoundaryIs>")
+            polygonOpen = True
+
+            ' Write outer ring
             kml.WriteLine("<LinearRing>")
-            ' Polygons are not normally closed. If you render them as is, you will get a filled polygon, but there will be 1 boundary segment missing.
-            ' This looks ugly, so close the polygon so the boundary looks complete
-            Dim pnts = Prt.Points.ToList
-            If Not pnts(0).IsEqual(pnts(pnts.Count - 1)) Then pnts.Add(pnts(0))     ' if not closed, then close it
-            KMLcoordinates(kml, pnts, digits)
+            Dim pts = prt.Points.ToList()
+            If Not pts(0).IsEqual(pts.Last()) Then pts.Add(pts(0))
+            KMLcoordinates(kml, pts, digits)
             kml.WriteLine("</LinearRing>")
-            kml.WriteLine(tagstack.Pop)    ' close of boundaryIs
-            i += 1
-        Next
-        ' Close any open polygon
-        While (tagstack.Count > 0)
-            kml.WriteLine(tagstack.Pop)
-        End While
-        If poly.Parts.Count > 1 And Not MultiGeometryOpen Then kml.WriteLine("</MultiGeometry>")
-    End Sub
+            kml.WriteLine("</outerBoundaryIs>")
+
+        Else
+            ' Inner ring (hole)
+            If Not polygonOpen Then
+                ' Defensive: inner ring without outer → ignore
+                Continue For
+            End If
+
+            kml.WriteLine("<innerBoundaryIs>")
+            kml.WriteLine("<LinearRing>")
+            Dim pts = prt.Points.ToList()
+            If Not pts(0).IsEqual(pts.Last()) Then pts.Add(pts(0))
+            KMLcoordinates(kml, pts, digits)
+            kml.WriteLine("</LinearRing>")
+            kml.WriteLine("</innerBoundaryIs>")
+
+        End If
+
+    Next
+
+    ' Close last polygon
+    If polygonOpen Then
+        kml.WriteLine("</Polygon>")
+    End If
+
+    If useMulti Then kml.WriteLine("</MultiGeometry>")
+
+End Sub
+
 
     Function CrossesAntiMeridian(g As Geometry) As Boolean
         ' returns true if geometry crosses anti-meridian
@@ -589,7 +622,7 @@ Module KMLExport
             KMLcoordinates(kml, labelpoint, 1)
             kml.WriteLine("</Point>")
             For Each poly In polys
-                poly = poly.Densify(5)
+                poly = DensifyCleanMergeOrient(poly, 5)
                 KMLPolygon(kml, poly, 2, True)
             Next
             kml.WriteLine("</MultiGeometry>")
@@ -657,7 +690,7 @@ Module KMLExport
                 KMLcoordinates(kml, labelpoint, 1)
                 kml.WriteLine("</Point>")
                 poly = NormalizeAntiMeridian(poly)
-                poly = poly.Densify(5).Simplify         ' ensure point every 5 degrees. Must be performed after NormalizeAntiMeridian
+                poly = DensifyCleanMergeOrient(poly, 5)
                 KMLPolygon(kml, poly, 2, True)
                 kml.WriteLine("</MultiGeometry>")
             End If

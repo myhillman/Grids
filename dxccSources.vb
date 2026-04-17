@@ -1,12 +1,6 @@
-﻿Imports System.Globalization
-Imports System.IO
-Imports System.Text.RegularExpressions
+﻿Imports System.Text.RegularExpressions
 Imports Esri.ArcGISRuntime.Geometry
-Imports Esri.ArcGISRuntime.Portal
-Imports Esri.ArcGISRuntime.Tasks.NetworkAnalysis
-Imports Ionic
 Imports Microsoft.Data.Sqlite
-Imports RTools_NTS.Util
 
 Module dxccSources
 	Public Class DxccSource
@@ -153,18 +147,6 @@ Module dxccSources
 		Return g
 	End Function
 
-	Private Function BuildDerived(expr As String, tol As Integer) As Geometry
-		Throw New NotImplementedException("Derived rule not implemented: " & expr)
-	End Function
-
-	Private Function SimplifyGeometry(g As Geometry, tolMeters As Integer) As Geometry
-		If g Is Nothing Then Return g
-		If tolMeters <= 0 Then Return g
-
-		' ArcGIS Runtime simplification
-		Dim tolerance = MetersToDegrees(g, tolMeters)       ' tolerance must be degrees
-		Return GeometryEngine.Generalize(g, tolerance, True)
-	End Function
 	Public Function MetersToDegrees(g As Geometry, meters As Double) As Double
 		' Use the latitude of the geometry's center
 		Dim env = g.Extent
@@ -195,68 +177,107 @@ Module dxccSources
 			cmd.ExecuteNonQuery()
 		End Using
 	End Sub
-	Public Async Function BuildDXCCGeometryAsync(src As DxccSource) As Task(Of Geometry)
+    Public Async Function BuildDXCCGeometryAsync(src As DxccSource) As Task(Of Geometry)
 
-		' STEP 1 — Resolve base geometry from rule (NE/OSM only)
+		' STEP 1 — Resolve base geometry
 		Dim baseGeom As Geometry = Await ResolveRuleExpressionAsync(src)
+		Dim degTol = src.tolerance_m / 110540       ' convert meter tolerance to degrees
+		baseGeom = GeometryEngine.Generalize(baseGeom, degTol, True)
+		baseGeom = RoundGeometry(baseGeom, 6)
 		If baseGeom Is Nothing Then
-			Debug.WriteLine($"Failed to resolve base geometry for DXCC '{src.name}' using rule: {src.rule} with bbox: {src.bbox}")
-			Return Nothing
-		End If
+            Debug.WriteLine($"Failed to resolve base geometry for DXCC '{src.name}' using rule: {src.rule}")
+            Return Nothing
+        End If
 
-		' STEP 2 — Apply bbox/poly if present
-		If Not String.IsNullOrWhiteSpace(src.bbox) Then
-			Dim clipGeom As Geometry = ParseBBoxOrPoly(src.bbox)
-			If clipGeom Is Nothing Then
-				Debug.WriteLine($"Failed to resolve bbox for DXCC '{src.name}' using bbox: {src.bbox}")
-			End If
-			If TypeOf clipGeom Is Envelope Then
-				' FAST PATH for rectangular clipping
-				baseGeom = GeometryEngine.Clip(baseGeom, CType(clipGeom, Envelope))
-			Else
-				' POLYGON PATH
-				Dim result As Geometry = Nothing
-				If src.name = "Fiji" Then
-					Dim pg = TryCast(clipGeom, Polygon)
-					If pg IsNot Nothing Then
-						Dim partIndex As Integer = 0
-						For Each part In pg.Parts
-							partIndex += 1
-							Dim pts = part.Points.ToList()
-						Next
-					End If
-					For Each part In pg.Parts
-						Dim pts = part.Points.ToList()
-					Next
-				End If
-				Dim clipPoly = CType(clipGeom, Polygon)
+        ' STEP 2 — Apply bbox/poly if present
+        If Not String.IsNullOrWhiteSpace(src.bbox) Then
 
-				For Each part In clipPoly.Parts
-					Dim pts = part.Points.ToList()
-					Dim partPoly = New PolygonBuilder(pts, SpatialReferences.Wgs84).ToGeometry()
+            Dim clipGeom As Geometry = ParseBBoxOrPoly(src.bbox)
+            If clipGeom Is Nothing Then
+                Debug.WriteLine($"Failed to resolve bbox for DXCC '{src.name}' using bbox: {src.bbox}")
+                Return Nothing
+            End If
 
-					Dim piece = GeometryEngine.Intersection(baseGeom, partPoly)
+            ' Diagnostics
+            Dim cext = clipGeom.Extent
+            Debug.WriteLine($"[CLIP] {src.name}: XMin={cext.XMin}, XMax={cext.XMax}, YMin={cext.YMin}, YMax={cext.YMax}")
 
-					If piece IsNot Nothing AndAlso Not piece.IsEmpty Then
-						If result Is Nothing Then
-							result = piece
-						Else
-							result = GeometryEngine.Union(result, piece)
-						End If
-					End If
-				Next
+            Dim bext = baseGeom.Extent
+            Debug.WriteLine($"[BASE] {src.name}: XMin={bext.XMin}, XMax={bext.XMax}, YMin={bext.YMin}, YMax={bext.YMax}")
 
-				baseGeom = result
-			End If
-		End If
-		If baseGeom Is Nothing Then
-			Debug.WriteLine($"Resulting geometry is empty after applying bbox {src.bbox} for DXCC '{src.name}'")
-		End If
-		' STEP 3 — simplification using tolerance_m
-		baseGeom = SimplifyGeometry(baseGeom, src.tolerance_m)
+            ' Clip (no splitting here)
+            baseGeom = GeometryEngine.Intersection(baseGeom, clipGeom)
+        End If
 
-		Return baseGeom
+        If baseGeom Is Nothing OrElse baseGeom.IsEmpty Then
+            Debug.WriteLine($"Resulting geometry is empty after applying bbox {src.bbox} for DXCC '{src.name}'")
+            Return Nothing
+        End If
+
+		Dim ex = baseGeom.Extent
+        Debug.WriteLine($"[BASE -result] {src.name}: XMin={ex.XMin}, XMax={ex.XMax}, YMin={ex.YMin}, YMax={ex.YMax}")
+
+        Return baseGeom
+    End Function
+
+
+
+	Public Function SimplifyGeometry(geom As Geometry, tolerance As Double) As Geometry
+		' Null or trivial geometry → return as-is
+		If geom Is Nothing Then Return Nothing
+		If TypeOf geom Is MapPoint Then Return geom
+		If TypeOf geom Is Polyline AndAlso DirectCast(geom, Polyline).Parts.Count = 0 Then Return geom
+		If TypeOf geom Is Polygon AndAlso DirectCast(geom, Polygon).Parts.Count = 0 Then Return geom
+
+		' ArcGIS Runtime 200.x Simplify() is too aggressive — do NOT use it
+		' Instead use Generalize() with preserveTopology:=True
+		Dim simplified As Geometry = GeometryEngine.Generalize(geom, tolerance, True)
+
+		' Generalize can introduce floating-point drift → round coordinates
+		simplified = RoundGeometry(simplified, 6)
+
+		Return simplified
 	End Function
+    Public Function RoundGeometry(geom As Geometry, decimals As Integer) As Geometry
+        If geom Is Nothing Then Return Nothing
+
+        If TypeOf geom Is MapPoint Then
+            Dim p = DirectCast(geom, MapPoint)
+            Return New MapPoint(Math.Round(p.X, decimals), Math.Round(p.Y, decimals))
+        End If
+
+        If TypeOf geom Is Polygon Then
+            Dim poly = DirectCast(geom, Polygon)
+            Dim builder As New PolygonBuilder(poly.SpatialReference)
+
+            For Each part In poly.Parts
+                Dim newPart As New List(Of MapPoint)
+                For Each p In part.Points
+                    newPart.Add(New MapPoint(Math.Round(p.X, decimals), Math.Round(p.Y, decimals)))
+                Next
+                builder.AddPart(newPart)
+            Next
+
+            Return builder.ToGeometry()
+        End If
+
+        If TypeOf geom Is Polyline Then
+            Dim line = DirectCast(geom, Polyline)
+            Dim builder As New PolylineBuilder(line.SpatialReference)
+
+            For Each part In line.Parts
+                Dim newPart As New List(Of MapPoint)
+                For Each p In part.Points
+                    newPart.Add(New MapPoint(Math.Round(p.X, decimals), Math.Round(p.Y, decimals)))
+                Next
+                builder.AddPart(newPart)
+            Next
+
+            Return builder.ToGeometry()
+        End If
+
+        Return geom
+    End Function
 
 
 	' ---------------------------------------------------------
@@ -342,16 +363,7 @@ Module dxccSources
 	'  BBOX/POLY PARSER (lon lat order)
 	' ---------------------------------------------------------
 	Public Function ParseBBoxOrPoly(value As String) As Geometry
-
 		Dim st = value.Trim()
-
-		' ---------------------------------------------------------
-		' Build antimeridian cut line once
-		' ---------------------------------------------------------
-		Dim antiBuilder As New PolylineBuilder(SpatialReferences.Wgs84)
-		antiBuilder.AddPoint(180, -90)
-		antiBuilder.AddPoint(180, 90)
-		Dim anti As Polyline = antiBuilder.ToGeometry()
 
 		' ---------------------------------------------------------
 		' 1. BBOX CASE (4 numbers)
@@ -364,128 +376,264 @@ Module dxccSources
 			Dim maxLon = Double.Parse(parts(2))
 			Dim maxLat = Double.Parse(parts(3))
 
-			' CASE A: Normal envelope (fast path)
-			If minLon <= maxLon Then
+			' ---------------------------------------------------------
+			' CASE A: Normal envelope (no AM crossing)
+			' ---------------------------------------------------------
+			' Normal bbox ONLY if it does NOT cross the AM
+			If maxLon >= minLon AndAlso (maxLon - minLon) <= 180 Then
 				Return New Envelope(minLon, minLat, maxLon, maxLat, SpatialReferences.Wgs84)
 			End If
 
-			' CASE B: Crosses antimeridian → build TWO rectangles explicitly
+			' ---------------------------------------------------------
+			' CASE B: AM-crossing bbox → build TWO rectangles
+			' ---------------------------------------------------------
+			Dim rawRings As New List(Of List(Of MapPoint))
+
+			' WEST RECTANGLE: minLon → -180. make it not touch the east rectangle
+			rawRings.Add(New List(Of MapPoint) From {
+				New MapPoint(minLon, minLat),
+				New MapPoint(NudgeLon(-180), minLat),
+				New MapPoint(NudgeLon(-180), maxLat),
+				New MapPoint(NudgeLon(minLon), maxLat),
+				New MapPoint(NudgeLon(minLon), minLat)
+		})
+
+			' EAST RECTANGLE: 180 → maxLon (clockwise)
+			rawRings.Add(New List(Of MapPoint) From {
+				New MapPoint(nudgelon(180), minLat),
+				New MapPoint(nudgelon(maxLon), minLat),
+				New MapPoint(nudgelon(maxLon), maxLat),
+				New MapPoint(nudgelon(180), maxLat),
+				New MapPoint(nudgelon(180), minLat)
+				})
+
+			' ---------------------------------------------------------
+			' Split each ring at AM
+			' ---------------------------------------------------------
+			Dim splitRings As New List(Of List(Of MapPoint))
+			For Each rr In rawRings
+				For Each sr In SplitRingAtAntimeridian(rr)
+					splitRings.Add(sr)
+				Next
+			Next
+
+			' ---------------------------------------------------------
+			' Remove degenerate rings
+			' ---------------------------------------------------------
+			Dim cleaned As New List(Of List(Of MapPoint))
+			For Each ring In splitRings
+
+				If ring.Count < 4 Then Continue For
+
+				Dim seen As New HashSet(Of String)(StringComparer.Ordinal)
+				For Each p In ring
+					Dim key = $"{p.X:0.000000},{p.Y:0.000000}"
+					seen.Add(key)
+				Next
+				If seen.Count < 3 Then Continue For
+
+				cleaned.Add(ring)
+			Next
+
+			' ---------------------------------------------------------
+			' Enforce clockwise orientation (ArcGIS Runtime requirement)
+			' ---------------------------------------------------------
+			Dim finalRings As New List(Of List(Of MapPoint))
+			For Each r In cleaned
+				finalRings.Add(EnsureClockwise(r))
+			Next
+
+			' ---------------------------------------------------------
+			' Build polygon
+			' ---------------------------------------------------------
 			Dim pb As New PolygonBuilder(SpatialReferences.Wgs84)
+			For Each r In finalRings
+				pb.AddPart(r)
+			Next
 
-			' West part: minLon → 180
-			pb.AddPart(New List(Of MapPoint) From {
-			New MapPoint(minLon, minLat),
-			New MapPoint(180, minLat),
-			New MapPoint(180, maxLat),
-			New MapPoint(minLon, maxLat),
-			New MapPoint(minLon, minLat)
-		})
-
-			' East part: -180 → maxLon
-			pb.AddPart(New List(Of MapPoint) From {
-			New MapPoint(-180, minLat),
-			New MapPoint(maxLon, minLat),
-			New MapPoint(maxLon, maxLat),
-			New MapPoint(-180, maxLat),
-			New MapPoint(-180, minLat)
-		})
-
-			Dim bboxPoly = pb.ToGeometry()
-
-			' Ensure CCW orientation
-			Dim list As New List(Of Geometry) From {bboxPoly}
-			Return NormalizeCut(list)
+			Return pb.ToGeometry()
 		End If
 
 		' ---------------------------------------------------------
 		' 2. POLY CASE (poly:"...")
 		' ---------------------------------------------------------
-		Dim r As New Regex("^poly:""(.+)""$", RegexOptions.IgnoreCase)
-		Dim matches = r.Match(st)
+		Dim rPoly As New Regex("^poly:""(.+)""$", RegexOptions.IgnoreCase)
+		Dim matches = rPoly.Match(st)
 		If matches.Success Then
 
 			' Parse coords
 			Dim coords = matches.Groups(1).Value.Split(" "c).
-					Select(Function(x) x.Trim()).
-					Where(Function(x) x.Length > 0).
-					ToList()
+			Select(Function(x) x.Trim()).
+			Where(Function(x) x.Length > 0).
+			ToList()
 
 			If coords.Count Mod 2 <> 0 Then
 				Throw New Exception($"Unrecognised bbox pattern {st}")
 			End If
 
-			' Build raw ring (NO normalization yet)
+			' Build raw ring
 			Dim pts As New List(Of MapPoint)
 			For i = 0 To coords.Count - 1 Step 2
-				pts.Add(New MapPoint(Double.Parse(coords(i)),
-								 Double.Parse(coords(i + 1)),
-								 SpatialReferences.Wgs84))
+			    Dim lon = NudgeLon(Double.Parse(coords(i)))
+			    Dim lat = Double.Parse(coords(i + 1))
+			    pts.Add(New MapPoint(lon, lat, SpatialReferences.Wgs84))
 			Next
 
+			' Close ring
 			If Not pts(0).IsEqual(pts.Last()) Then pts.Add(pts(0))
 
-			Dim pb As New PolygonBuilder(SpatialReferences.Wgs84)
-			pb.AddPart(pts)
-			Dim rawPoly = pb.ToGeometry()
+			' Split at AM
+			Dim rings = SplitRingAtAntimeridian(pts)
 
-			' CUT FIRST (before normalization)
-			Dim cut = GeometryEngine.Cut(rawPoly, anti)
+			' Remove degenerate rings
+			Dim cleaned As New List(Of List(Of MapPoint))
+			For Each ring In rings
 
-			Dim out As New PolygonBuilder(SpatialReferences.Wgs84)
+				If ring.Count < 4 Then Continue For
 
-			If cut Is Nothing OrElse cut.Count = 0 Then
-				' No cut → normalize whole ring
-				Dim norm = NormalizeRingTo180(pts)
-				out.AddPart(norm)
-			Else
-				' Normalize each cut part separately
-				For Each g In cut
-					Dim pg = TryCast(g, Polygon)
-					If pg IsNot Nothing Then
-						For Each part In pg.Parts
-							Dim ring = part.Points.ToList()
-							Dim norm = NormalizeRingTo180(ring)
-							out.AddPart(norm)
-						Next
-					End If
+				Dim seen As New HashSet(Of String)(StringComparer.Ordinal)
+				For Each p In ring
+					Dim key = $"{p.X:0.000000},{p.Y:0.000000}"
+					seen.Add(key)
 				Next
-			End If
+				If seen.Count < 3 Then Continue For
 
-			Return out.ToGeometry()
+				cleaned.Add(ring)
+			Next
+
+			' Build polygon
+			Dim pb As New PolygonBuilder(SpatialReferences.Wgs84)
+			For Each r In cleaned
+				pb.AddPart(r)
+			Next
+
+			Return pb.ToGeometry()
 		End If
 
 		Throw New Exception($"Unrecognised bbox pattern {st}")
 	End Function
+    Private Function NudgeLon(lon As Double) As Double
+        Const EPS As Double = 1E-5
+        If lon <= -180 Then Return -180 + EPS
+        If lon >= 180 Then Return 180 - EPS
+        Return lon
+    End Function
 
+	Public Function SplitRingAtAntimeridian(ring As List(Of MapPoint)) As List(Of List(Of MapPoint))
+		Dim result As New List(Of List(Of MapPoint))
 
-	Function NormalizeCut(cut As IReadOnlyList(Of Geometry)) As Geometry
-		Dim out As New PolygonBuilder(SpatialReferences.Wgs84)
-		For Each g In cut
-			Dim pg = TryCast(g, Polygon)
-			If pg IsNot Nothing Then
-				For Each part In pg.Parts
+		' ---------------------------------------------------------
+		' 1. UNWRAP longitudes into continuous space
+		'    e.g. 170, 175, 180, 185, 190, 200
+		' ---------------------------------------------------------
+		Dim unwrapped As New List(Of MapPoint)
+		Dim prevLon As Double = ring(0).X
+		Dim offset As Double = 0
 
-					' Convert to mutable list
-					Dim pts = part.Points.ToList
+		unwrapped.Add(New MapPoint(prevLon, ring(0).Y))
 
-					' Ensure closed
-					If Not pts(0).IsEqual(pts.Last()) Then pts.Add(pts(0))
+		For i = 1 To ring.Count - 1
+			Dim lon = ring(i).X
+			Dim lat = ring(i).Y
 
-					' Compute signed area
-					Dim area = PolygonArea(pts)
+			' compute raw delta
+			Dim delta = lon - prevLon
 
-					' Reverse if clockwise (negative area)
-					If area < 0 Then
-						pts.Reverse()
-					End If
-
-					out.AddPart(pts)
-				Next
+			' unwrap if jump > 180
+			If delta > 180 Then
+				offset -= 360
+			ElseIf delta < -180 Then
+				offset += 360
 			End If
+
+			Dim uwLon = lon + offset
+			unwrapped.Add(New MapPoint(uwLon, lat))
+
+			prevLon = lon
 		Next
 
-		Return out.ToGeometry()
+		' ---------------------------------------------------------
+		' 2. Split at every crossing of ±180 in unwrapped space
+		' ---------------------------------------------------------
+		Dim part As New List(Of MapPoint)
+		part.Add(unwrapped(0))
+
+		For i = 1 To unwrapped.Count - 1
+			Dim p1 = unwrapped(i - 1)
+			Dim p2 = unwrapped(i)
+
+			Dim lon1 = p1.X
+			Dim lon2 = p2.X
+			Dim lat1 = p1.Y
+			Dim lat2 = p2.Y
+
+			' Check if segment crosses ±180
+			If (lon1 < 180 AndAlso lon2 > 180) OrElse (lon1 > 180 AndAlso lon2 < 180) Then
+				' crossing at +180
+				Dim t = (180 - lon1) / (lon2 - lon1)
+				Dim y = lat1 + t * (lat2 - lat1)
+
+				Dim c1 As New MapPoint(180, y)
+				part.Add(c1)
+				result.Add(New List(Of MapPoint)(part))
+
+				part = New List(Of MapPoint)
+				part.Add(New MapPoint(-180, y))
+			ElseIf (lon1 < -180 AndAlso lon2 > -180) OrElse (lon1 > -180 AndAlso lon2 < -180) Then
+				' crossing at -180
+				Dim t = (-180 - lon1) / (lon2 - lon1)
+				Dim y = lat1 + t * (lat2 - lat1)
+
+				Dim c1 As New MapPoint(-180, y)
+				part.Add(c1)
+				result.Add(New List(Of MapPoint)(part))
+
+				part = New List(Of MapPoint)
+				part.Add(New MapPoint(180, y))
+			End If
+
+			part.Add(p2)
+		Next
+
+		result.Add(part)
+
+		' ---------------------------------------------------------
+		' 3. RENORMALIZE all parts back to [-180,180]
+		' ---------------------------------------------------------
+		Dim finalParts As New List(Of List(Of MapPoint))
+
+		For Each r In result
+			Dim nr As New List(Of MapPoint)
+			For Each p In r
+				nr.Add(NormalizeTo180(p))
+			Next
+
+			' close ring
+			If Not (nr(0).X = nr.Last().X AndAlso nr(0).Y = nr.Last().Y) Then
+				nr.Add(nr(0))
+			End If
+
+			' remove degenerate
+			If nr.Count >= 4 Then finalParts.Add(nr)
+		Next
+
+		Return finalParts
 	End Function
+
+
+	Public Function NormalizeTo180(p As MapPoint) As MapPoint
+        Dim lon = p.X
+        Dim lat = p.Y
+
+        ' Normalize into [-180, 180)
+        lon = ((lon + 180) Mod 360 + 360) Mod 360 - 180
+
+        ' SPECIAL FIX: preserve +180 exactly
+        If Math.Abs(p.X - 180) < 0.0000001 Then lon = 180
+
+        Return New MapPoint(lon, lat, p.SpatialReference)
+    End Function
+
 
 	' ring winding is not guaranteed in source data, so we need to classify rings as outer vs inner, and then orient them correctly (outer CCW, inner CW) to ensure consistent geometry across all sources. This is done by building a containment hierarchy of rings, and classifying by depth parity (outer = even depth, inner = odd depth).
 	Public Class ClassifiedRing
@@ -495,85 +643,8 @@ Module dxccSources
 		Public Property Parent As ClassifiedRing
 		Public Property Children As New List(Of ClassifiedRing)
 	End Class
-	Public Function NormalizePolygon(poly As Polygon) As Polygon
-		If poly Is Nothing OrElse poly.IsEmpty Then Return Nothing
-		' 1. Classify rings (outer vs inner)
-		Dim rings = ClassifyPolygonRings(poly)   ' from earlier code
 
-		' 2. Build a new polygon with corrected orientation
-		Dim pb As New PolygonBuilder(SpatialReferences.Wgs84)
 
-		For Each r In rings
-
-			Dim pts = r.Part.Points.ToList()
-
-			Dim area = PolygonArea(pts)
-
-			If r.IsOuter Then
-				' outer rings must be CCW → positive area
-				If area < 0 Then pts.Reverse()
-			Else
-				' inner rings must be CW → negative area
-				If area > 0 Then pts.Reverse()
-			End If
-
-			pb.AddPart(pts)
-		Next
-
-		Return pb.ToGeometry()
-	End Function
-
-	Public Function ClassifyPolygonRings(poly As Polygon) As List(Of ClassifiedRing)
-
-		Dim rings As New List(Of ClassifiedRing)
-
-		' 1. Collect rings
-		For Each part In poly.Parts
-			rings.Add(New ClassifiedRing With {.Part = part})
-		Next
-
-		' 2. Determine containment relationships
-		For i = 0 To rings.Count - 1
-			Dim child = rings(i)
-			Dim bestParent As ClassifiedRing = Nothing
-
-			For j = 0 To rings.Count - 1
-				If i = j Then Continue For
-
-				Dim candidate = rings(j)
-
-				If RingContainsRing(candidate.Part, child.Part) Then
-					If bestParent Is Nothing Then
-						bestParent = candidate
-					Else
-						' choose the smallest containing ring
-						If Math.Abs(PolygonArea(candidate.Part.Points)) < Math.Abs(PolygonArea(bestParent.Part.Points)) Then
-							bestParent = candidate
-						End If
-					End If
-				End If
-			Next
-
-			child.Parent = bestParent
-			If bestParent IsNot Nothing Then
-				bestParent.Children.Add(child)
-			End If
-		Next
-
-		' 3. Assign depths
-		For Each r In rings
-			If r.Parent Is Nothing Then
-				AssignDepth(r, 0)
-			End If
-		Next
-
-		' 4. Classify outer/inner by depth parity
-		For Each r In rings
-			r.IsOuter = (r.Depth Mod 2 = 0)
-		Next
-
-		Return rings
-	End Function
 	Private Sub AssignDepth(r As ClassifiedRing, depth As Integer)
 		r.Depth = depth
 		For Each c In r.Children
@@ -584,29 +655,6 @@ Module dxccSources
 		Dim x = p.X
 		If x < 0 Then x += 360
 		Return New MapPoint(x, p.Y, SpatialReferences.Wgs84)
-	End Function
-
-	Private Function RingContainsRing(outerPart As ReadOnlyPart, innerPart As ReadOnlyPart) As Boolean
-
-		' Normalize both rings into 0..360 domain
-		Dim outerPts = outerPart.Points.Select(Function(p) NormalizeLon(p)).ToList()
-		Dim innerPts = innerPart.Points.Select(Function(p) NormalizeLon(p)).ToList()
-
-		Dim testPoint = innerPts(0)
-
-		Dim pb As New PolygonBuilder(SpatialReferences.Wgs84)
-		For Each p In outerPts
-			pb.AddPoint(p)
-		Next
-
-		' Close ring if needed
-		If Not outerPts(0).IsEqual(outerPts(outerPts.Count - 1)) Then
-			pb.AddPoint(outerPts(0))
-		End If
-
-		Dim outerPoly = pb.ToGeometry()
-
-		Return GeometryEngine.Contains(outerPoly, testPoint)
 	End Function
 
 End Module

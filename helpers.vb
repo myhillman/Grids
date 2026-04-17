@@ -1,9 +1,6 @@
-﻿Imports System.Diagnostics.Contracts
-Imports System.Net
-Imports System.Net.Http
+﻿Imports System.Net.Http
 Imports System.Security.Cryptography
 Imports System.Text
-Imports System.Text.Json
 Imports System.Text.RegularExpressions
 Imports Esri.ArcGISRuntime.Geometry
 Imports Newtonsoft.Json
@@ -138,6 +135,20 @@ Public Module helpers
         Next
         Return String.Join(";<br>", hyperlinkList)
     End Function
+    Public Function EnsureClockwise(ring As List(Of MapPoint)) As List(Of MapPoint)
+        ' Compute signed area (shoelace)
+        Dim area As Double = 0
+        For i = 0 To ring.Count - 2
+            area += (ring(i + 1).X - ring(i).X) * (ring(i + 1).Y + ring(i).Y)
+        Next
+
+        ' ArcGIS outer rings must be clockwise (area < 0)
+        If area > 0 Then
+            ring.Reverse()
+        End If
+
+        Return ring
+    End Function
 
     Public Function PolygonArea(ring As IEnumerable(Of MapPoint)) As Double
         ' Shoelace formula for signed polygon area
@@ -169,6 +180,104 @@ Public Module helpers
         Return area / 2.0
     End Function
 
+    Function DensifyCleanMergeOrient(bbox As Geometry, degrees As Double) As Polygon
+        Dim poly As Polygon
+
+        '---------------------------------------------------------
+        ' 1. Convert Envelope → Polygon (always CCW)
+        '---------------------------------------------------------
+        If TypeOf bbox Is Envelope Then
+            Dim env = CType(bbox, Envelope)
+            Dim pb As New PolygonBuilder(env.SpatialReference)
+
+            pb.AddPoint(env.XMin, env.YMax) ' top-left
+            pb.AddPoint(env.XMin, env.YMin) ' bottom-left
+            pb.AddPoint(env.XMax, env.YMin) ' bottom-right
+            pb.AddPoint(env.XMax, env.YMax) ' top-right
+            pb.AddPoint(env.XMin, env.YMax) ' close
+
+            poly = pb.ToGeometry()
+        ElseIf TypeOf bbox Is Polygon Then
+            poly = CType(bbox, Polygon)
+        Else
+            ' Unexpected type → return empty polygon
+            Return New PolygonBuilder(SpatialReferences.Wgs84).ToGeometry()
+        End If
+
+        '---------------------------------------------------------
+        ' 2. Densify (Runtime 200.x returns Geometry, not Polygon)
+        '---------------------------------------------------------
+        Dim g As Geometry = GeometryEngine.Densify(poly, degrees)
+
+        If g.GeometryType <> GeometryType.Polygon Then
+            ' Should not happen, but fallback
+            Return poly
+        End If
+
+        Dim d As Polygon = CType(g, Polygon)
+
+        '---------------------------------------------------------
+        ' 3. Merge all parts into a single ring
+        '    (200.x densify often splits long edges)
+        '---------------------------------------------------------
+        Dim merged As New List(Of MapPoint)
+
+        For Each part In d.Parts
+            Dim pts = part.Points
+            For i = 0 To pts.Count - 2   ' skip closing point
+                merged.Add(pts(i))
+            Next
+        Next
+
+        '---------------------------------------------------------
+        ' 4. Clean densify artifacts
+        '---------------------------------------------------------
+        merged = CleanRingPoints(merged)
+
+        '---------------------------------------------------------
+        ' 5. Normalize ring order (stabilize starting vertex)
+        '---------------------------------------------------------
+        merged = NormalizeRingOrder(merged)
+
+        '---------------------------------------------------------
+        ' 6. Fix orientation (KML outer rings must be CCW)
+        '---------------------------------------------------------
+        Dim area = PolygonArea(merged)
+        If area < 0 Then merged.Reverse()
+
+        '---------------------------------------------------------
+        ' 7. Rebuild polygon
+        '---------------------------------------------------------
+        Dim pbFinal As New PolygonBuilder(poly.SpatialReference)
+        pbFinal.AddPart(merged)
+        Return pbFinal.ToGeometry()
+    End Function
+
+
+    Function NormalizeRingOrder(pts As List(Of MapPoint)) As List(Of MapPoint)
+        ' Find lexicographically smallest point (lon, then lat)
+        Dim minIndex = 0
+        For i = 1 To pts.Count - 1
+            If pts(i).X < pts(minIndex).X OrElse
+           (pts(i).X = pts(minIndex).X AndAlso pts(i).Y < pts(minIndex).Y) Then
+                minIndex = i
+            End If
+        Next
+
+        ' Rotate ring so smallest point is first
+        Dim rotated As New List(Of MapPoint)
+        For i = 0 To pts.Count - 1
+            rotated.Add(pts((minIndex + i) Mod pts.Count))
+        Next
+
+        ' Ensure closure
+        If rotated(0).X <> rotated(rotated.Count - 1).X OrElse
+       rotated(0).Y <> rotated(rotated.Count - 1).Y Then
+            rotated.Add(rotated(0))
+        End If
+
+        Return rotated
+    End Function
 
     Public Function ConvertOsmToEsri(polys As List(Of OSMPolygon)) As Polygon
         Dim builder As New Esri.ArcGISRuntime.Geometry.PolygonBuilder(SpatialReferences.Wgs84)
@@ -364,6 +473,65 @@ Public Module helpers
         Public Property Inners As List(Of List(Of MapPoint))
     End Class
 
+    Public Function CleanPoly(poly As Polygon) As Polygon
+        ' Used to clean up the mess made by Densify
+        Dim pb As New PolygonBuilder(poly.SpatialReference)
+
+        For Each part In poly.Parts
+            Dim pts = part.Points.ToList()
+            Dim cleaned = CleanRingPoints(pts)
+            pb.AddPart(cleaned)
+        Next
+
+        Return pb.ToGeometry()
+    End Function
+    Function CleanRingPoints(pts As IList(Of MapPoint)) As List(Of MapPoint)
+        Dim cleaned As New List(Of MapPoint)
+
+        ' Remove duplicate consecutive points
+        For i = 0 To pts.Count - 1
+            Dim p = pts(i)
+            Dim prev = If(i = 0, Nothing, pts(i - 1))
+
+            If prev IsNot Nothing AndAlso p.X = prev.X AndAlso p.Y = prev.Y Then
+                Continue For
+            End If
+
+            cleaned.Add(p)
+        Next
+
+        ' Remove duplicate last point if same as first
+        If cleaned.Count > 1 Then
+            Dim first = cleaned(0)
+            Dim last = cleaned(cleaned.Count - 1)
+            If first.X = last.X AndAlso first.Y = last.Y Then
+                cleaned.RemoveAt(cleaned.Count - 1)
+            End If
+        End If
+
+        ' Ensure ring is closed
+        cleaned.Add(cleaned(0))
+
+        Return cleaned
+    End Function
+
+    Function MergeParts(poly As Polygon) As Polygon
+        Dim allPts As New List(Of MapPoint)
+
+        For Each part In poly.Parts
+            ' Skip the closing point of each part
+            For i = 0 To part.Points.Count - 2
+                allPts.Add(part.Points(i))
+            Next
+        Next
+
+        ' Close the ring
+        allPts.Add(allPts(0))
+
+        Dim pb As New PolygonBuilder(poly.SpatialReference)
+        pb.AddPart(allPts)
+        Return pb.ToGeometry()
+    End Function
 
     ' Helper: signed area (WGS84 ok for orientation)
     Private Function PolygonArea(ring As List(Of MapPoint)) As Double

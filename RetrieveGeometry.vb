@@ -1,8 +1,6 @@
-﻿Imports System.Data.Common
-Imports System.Net.Http
+﻿Imports System.Net.Http
 Imports System.Text
 Imports System.Text.Json
-Imports Esri.ArcGISRuntime.Geometry
 Imports Microsoft.Data.Sqlite
 Imports NetTopologySuite.Geometries
 Imports NetTopologySuite.IO

@@ -587,8 +587,7 @@ There are some additional folders which are closed by default. You must open the
             End If
         End If
         result = NormalizeAntiMeridian(result)   ' handle the anti meridian
-        result = result.Densify(5).Simplify
-        result = FixRingOrientation(result)     ' make CCW
+        result = DensifyCleanMergeOrient(result, 5)
         Return result
     End Function
     Public Async Sub MakeShapefile()
@@ -774,7 +773,7 @@ There are some additional folders which are closed by default. You must open the
             sql.CommandText = "Select * FROM `DXCC` WHERE `Deleted`=0 And `geometry` Is Not NULL ORDER BY `Entity`"     ' fetch all geometry
             sqldr = sql.ExecuteReader
             While sqldr.Read
-                ' get the geometry which is in ArcGIS JSON format, convert to Esri geometry, and then to KML geometry
+                ' get the geometry which is in GeoJSON format, convert to Esri geometry, and then to KML geometry
                 Dim geom = LoadPolygon(sqldr("geometry"))
                 Dim labelPoint = geom.LabelPoint
                 Dim kmlgeo As New KmlGeometry(geom, KmlAltitudeMode.ClampToGround, False, True)

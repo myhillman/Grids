@@ -1,9 +1,6 @@
 ﻿Imports Esri.ArcGISRuntime.Geometry
 Imports Microsoft.Data.Sqlite
 Imports System.IO
-Imports System.Windows.Forms.VisualStyles.VisualStyleElement
-Imports System.Xml
-Imports System.Xml.XPath
 
 Module Reports
     Sub EntityReport()

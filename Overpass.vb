@@ -1,12 +1,7 @@
-﻿Imports System.Drawing
-Imports System.Linq
+﻿Imports System.Linq
 Imports System.Net.Http
-Imports System.Runtime.CompilerServices
 Imports System.Text
 Imports System.Text.Json
-Imports System.Text.RegularExpressions
-Imports System.Threading
-Imports SQLitePCL
 
 
 ' ==========================
