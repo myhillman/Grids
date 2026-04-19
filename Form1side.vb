@@ -349,33 +349,10 @@ There are some additional folders which are closed by default. You must open the
             Dim rule = SafeStr(sqldr("rule"))
             Dim bbox = SafeStr(sqldr("bbox"))
             Dim tolerance_m = SafeStr(sqldr("tolerance_m"))
-            Dim geom = Await EvaluateExpressionAsync(relation, cache)     ' get geometry for the country from OSM using the specified query parameters
+            Dim geom = Await EvaluateExpressionAsync(relation, cache)     ' get geometry for the country using the specified query parameters
             Debug.WriteLine("Cache hits: " & cache.CacheHits)
             Debug.WriteLine("Cache misses: " & cache.CacheMisses)
             Dim esriGeom = NtsToEsri(geom)     ' convert to esri
-            ' Generalize the geometry
-            Dim env As Envelope = esriGeom.Extent
-
-            Dim p1 As New MapPoint(env.XMin, env.YMin, SpatialReferences.Wgs84)
-            Dim p2 As New MapPoint(env.XMax, env.YMax, SpatialReferences.Wgs84)
-
-            ' Estimate the country’s “size” in km by calculating the geodetic distance between the corners of the bounding box. This is a rough estimate, but gives us a way to scale the generalization tolerance based on the size of the country.
-            Dim result = GeometryEngine.DistanceGeodetic(p1, p2, LinearUnits.Kilometers, AngularUnits.Degrees, Nothing)
-            Dim sizeKm = result.Distance
-
-            ' Choose a tolerance based on size
-            Dim tol As Double
-            If sizeKm < 50 Then
-                tol = 0.00005   ' ~5 m
-            ElseIf sizeKm < 200 Then
-                tol = 0.0002    ' ~20 m
-            ElseIf sizeKm < 1000 Then
-                tol = 0.0005    ' ~50 m
-            ElseIf sizeKm < 3000 Then
-                tol = 0.002     ' ~200 m
-            Else
-                tol = 0.005    ' ~500 m
-            End If
 
             ' Convert to GeoJSON
             Dim GeoJson As String = GeometryToGeoJson(esriGeom)
@@ -404,120 +381,7 @@ There are some additional folders which are closed by default. You must open the
         End If
         Return True
     End Function
-    Public Async Function LoadFeaturesAsync(neFile As String, neQuery As String, bbox As String) As Task(Of List(Of Geometry))
-
-        Dim geom As Geometry = Nothing
-        ' 1. Open the Natural Earth shapefile
-        Dim shpPath As String = System.IO.Path.Combine("D:\GIS DATA", "Natural Earth", $"ne_10m_{neFile}.shp")
-        'CleanDbf(System.IO.Path.ChangeExtension(shpPath, ".dbf"))
-        Dim table As ShapefileFeatureTable = Await ShapefileFeatureTable.OpenAsync(shpPath)
-
-        ' 2. Build the query
-        Dim parameters As New QueryParameters() With {
-                .WhereClause = neQuery,
-                .OutSpatialReference = SpatialReferences.Wgs84,
-                .ReturnGeometry = True
-            }
-
-        ' 3. Execute the query
-        Dim result As FeatureQueryResult = Await table.QueryFeaturesAsync(parameters)
-        Debug.WriteLine($"Query returned {result.Count} features for {neFile} with query '{neQuery}'.")
-
-        ' build the bbox geometry if specified
-        If bbox IsNot Nothing AndAlso bbox <> "" Then
-            Dim tokens = Split(bbox, ",")
-            If tokens.Length = 4 Then
-                geom = New Envelope(Double.Parse(tokens(0)), Double.Parse(tokens(1)), Double.Parse(tokens(2)), Double.Parse(tokens(3)), SpatialReferences.Wgs84
-                )
-                Debug.WriteLine($"Envelope used: {geom.Extent.XMin}, {geom.Extent.YMin}, {geom.Extent.XMax}, {geom.Extent.YMax}")
-            Else
-                ' It's a polygon - parse the points
-                Dim pts As New List(Of MapPoint)
-
-                For i = 0 To tokens.Length - 1 Step 2
-                    Dim x = Double.Parse(tokens(i))     ' lon
-                    Dim y = Double.Parse(tokens(i + 1)) ' lat
-                    pts.Add(New MapPoint(x, y, SpatialReferences.Wgs84))
-                Next
-
-                ' Build polygon
-                Dim builder As New Esri.ArcGISRuntime.Geometry.PolygonBuilder(SpatialReferences.Wgs84)
-                builder.AddPoints(pts)
-                geom = builder.ToGeometry()
-            End If
-        End If
-
-        Dim output As New List(Of Geometry)
-        ' 5. Process each feature
-        For Each f In result
-            Dim g As Geometry = f.Geometry
-
-            ' If bbox exists → clip
-            If geom IsNot Nothing Then
-                g = GeometryEngine.Intersection(g, geom)
-                If g Is Nothing OrElse g.IsEmpty Then Continue For
-            End If
-
-            ' 6. Split multipolygons into individual polygon parts
-            If TypeOf g Is Polygon Then
-                Dim poly = DirectCast(g, Polygon)
-
-                For Each Prt In poly.Parts
-                    Dim builder As New Esri.ArcGISRuntime.Geometry.PolygonBuilder(SpatialReferences.Wgs84)
-                    builder.AddPart(Prt)
-                    output.Add(builder.ToGeometry())
-                Next
-
-            Else
-                ' Single polygon
-                output.Add(g)
-            End If
-        Next
-
-        Return output
-
-    End Function
-
-    Public Sub CleanDbf(path As String)
-        Dim temp = path & ".clean"
-
-        Using reader As New DBFReader(path)
-            Dim fields = reader.Fields   ' <-- capture fields BEFORE creating writer
-            If File.Exists(temp) Then File.Delete(temp)
-            Using writer As New DBFWriter(temp)
-                writer.CharEncoding = System.Text.Encoding.UTF8
-
-                ' IMPORTANT: set fields ONCE, immediately after creating writer
-                writer.Fields = fields
-
-                Dim record As Object()
-                While True
-                    record = reader.NextRecord()
-                    If record Is Nothing Then Exit While
-
-                    For i = 0 To record.Length - 1
-                        If TypeOf record(i) Is String Then
-                            Dim s = record(i).ToString()
-
-                            ' Remove NULLs and control chars
-                            s = Regex.Replace(s, "[\x00-\x1F]", "")
-
-                            ' Trim whitespace
-                            s = s.Trim()
-
-                            record(i) = s
-                        End If
-                    Next
-
-                    writer.WriteRecord(record)   ' <-- correct method for new file
-                End While
-            End Using
-        End Using
-
-        File.Delete(path)
-        File.Move(temp, path)
-    End Sub
-
+    
     Private Function RangeString(number_array As List(Of Integer)) As String
         ' convert a list of numbers e.g. 11,16,12,17,18,15,22,23,24    to     11-12,15-18,22-24
         Dim number As Integer, previous_number As Integer, range As Boolean, result As String
@@ -544,52 +408,6 @@ There are some additional folders which are closed by default. You must open the
         Return result
     End Function
 
-    Public Function ParseBox(bbox As String) As Polygon
-        ' Convert a Bounding Box specification to a polygon
-        ' Coordinates are in the order minLon, minLat, maxLon, maxLat, i.e. west, south, east, north
-        ' It may be a bbox of form "a,b,c,d",  or a polygon of form "poly:a b c d e f g h i j"
-        Dim mpb As New PolygonBuilder(SpatialReferences.Wgs84), result As Polygon = Nothing
-
-        If IsDBNullorEmpty(bbox) Then Return result        ' no bounds
-        Dim groups = bbox.Split(",")
-        If groups.Length = 4 Then        ' could be a box
-            If Not (Between(CDbl(groups(0)), -180, 180) And Between(CDbl(groups(1)), -90, 90) And Between(CDbl(groups(2)), -180, 180) And Between(CDbl(groups(3)), -90, 90)) Then
-                MsgBox($"Bad lat/lon in bounding box {bbox}", vbCritical + vbOKOnly, "Bad coordinate")
-            End If
-            Dim minLon = Double.Parse(groups(0))
-            Dim minLat = Double.Parse(groups(1))
-            Dim maxLon = Double.Parse(groups(2))
-            Dim maxLat = Double.Parse(groups(3))
-
-            mpb.AddPoint(New MapPoint(minLon, minLat))
-            mpb.AddPoint(New MapPoint(minLon, maxLat))
-            mpb.AddPoint(New MapPoint(maxLon, maxLat))
-            mpb.AddPoint(New MapPoint(maxLon, minLat))
-            result = mpb.ToGeometry
-        Else        ' might be a polygon
-            Dim matches = Regex.Match(bbox, "^poly:""([\d\.\- ]+)""$")
-            If matches.Success Then
-                Dim data = Split(matches.Groups(1).Value, " ")      ' split space separated list of coordinates
-                Dim X As Double, Y As Double
-                Debug.Assert(data.Length Mod 2 = 0, "Must be even number of coordinates")
-                For i = 0 To data.Length - 1 Step 2
-                    Debug.Assert(Double.TryParse(data(i), X), "Badly formed double")
-                    Debug.Assert(Double.TryParse(data(i + 1), Y), "Badly formed double")
-                    If Not (Between(X, -180, 250) And Between(Y, -90, 90)) Then
-                        MsgBox($"Bad coordinate in {bbox}:lon={X},lat={Y}", vbCritical + vbOKOnly, "Bad coordinate")
-                    End If
-                    mpb.AddPoint(New MapPoint(CDbl(X), CDbl(Y)))         ' add xy pair
-                Next
-                If Not mpb.Parts(0).StartPoint.IsEqual(mpb.Parts(0).Points.Last) Then
-                    mpb.AddPoint(mpb.Parts(0).StartPoint)       ' close the polygon
-                End If
-                result = mpb.ToGeometry
-            End If
-        End If
-        result = NormalizeAntiMeridian(result)   ' handle the anti meridian
-        result = DensifyCleanMergeOrient(result, 5)
-        Return result
-    End Function
     Public Async Sub MakeShapefile()
         Dim Shapefile = $"{Application.StartupPath}\DXCC.shp"
         Dim sql As SqliteCommand, SQLdr As SqliteDataReader, countries = 0
@@ -1042,7 +860,7 @@ There are some additional folders which are closed by default. You must open the
         Dim testcases As New List(Of (input As String, result As Boolean)) From {{("-15,-171,-14,-167", True)}, {("-53,165,-48,179.9", True)},
             {("-53,165,-48", False)}, {("poly:""-12 -160 -12 -135 -27 -135 -17 -160 -12 -160""", True)}}
         For Each testcase In testcases
-            Dim result = ParseBox(testcase.input) IsNot Nothing
+            Dim result = ParseBboxorpoly(testcase.input) IsNot Nothing
             AppendText(Form1.TextBox1, $"test case {testcase.input}, Expected result {testcase.result}, Passed {testcase.result = result}{vbCrLf}")
         Next
     End Sub

@@ -7,6 +7,25 @@ Imports System.Text.Json
 ' ==========================
 ' Core OSM model
 ' ==========================
+Public Class PointD
+    Public Lat As Double
+    Public Lon As Double
+    Public Sub New(Lat As Double, Lon As Double)
+        Me.Lat = Lat
+        Me.Lon = Lon
+    End Sub
+End Class
+Public Class Ring
+    Public Property Points As List(Of PointD)
+    Public Property IsHole As Boolean = False
+
+    Public Sub New()
+        Points = New List(Of PointD)
+    End Sub
+    Public Sub Reverse()
+        Points.Reverse()
+    End Sub
+End Class
 Public Class OSMNode
     Public Property Id As Long
     Public Property Lat As Double

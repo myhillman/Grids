@@ -11,8 +11,9 @@ Module Reports
         Dim TotalUnclosed As Integer = 0, TotalNotes As Integer = 0, TotalBbox As Integer = 0
         Dim outer As Integer, inner As Integer, unclosed As Integer
 
+        Dim htmlFile = Path.Combine(Application.StartupPath, "DXCC.html")
         Using connect As New SqliteConnection(DXCC_DATA),
-              html As New StreamWriter($"{Application.StartupPath}\DXCC.html", False)
+              html As New StreamWriter(htmlFile, False)
             connect.Open()
             sql = connect.CreateCommand
             ' Find total entries in report
@@ -77,6 +78,7 @@ Module Reports
             html.WriteLine($"<tr><td>{TotalEntity}</td><td>{TotalParts:n0}</td><td></td><td></td><td>{TotalPoints:n0}</td><td>{TotalUnclosed:n0}</td><td>{TotalJSON:n0}</td><td>{TotalQueries}</td><td>{TotalBbox}</td><td>{TotalNotes}</td></tr>")
             html.WriteLine("</table>")
             AppendText(Form1.TextBox1, $"{lines} lines written To html file{vbCrLf}")
+            OpenHtml(htmlFile)
         End Using
     End Sub
     Sub GeometrySizeTable()
@@ -84,8 +86,9 @@ Module Reports
         Dim partcount As Integer, lines As Integer = 0
         Dim TotalEntity As Integer = 0, TotalParts As Integer = 0, TotalSize As Integer = 0
 
+        Dim htmlFile = Path.Combine(Application.StartupPath, "Geometry Size.html")
         Using connect As New SqliteConnection(DXCC_DATA),
-              html As New StreamWriter($"{Application.StartupPath}\Geometry Size.html", False)
+              html As New StreamWriter(htmlFile, False)
             connect.Open()
             sql = connect.CreateCommand
             ' Find total size of geometry
@@ -107,21 +110,59 @@ Module Reports
             sql.CommandText = "select *,LENGTH(geometry) AS size from `DXCC` where `Deleted`=0 and DXCCnum != 999 ORDER BY size DESC"
             SQLdr = sql.ExecuteReader
             html.WriteLine("<!DOCTYPE html>")
-            html.WriteLine("<style> table td:nth-child(2), td:nth-child(3), td:nth-child(4),td:nth-child(5),td:nth-child(6) {text-align:right;} .red td{color:red;font-weight: bold;}</style>")
-            html.WriteLine("<table border=1>")
+            html.WriteLine("
+                <style>
+                    table {
+                        border-collapse: collapse;
+                        border: 1px solid #444;
+                    }
+
+                    table th, table td {
+                        border: 1px solid #444;
+                        padding: 4px 6px;
+                    }
+
+                    /* Right‑align columns 2–6 */
+                    table td:nth-child(2),
+                    table td:nth-child(3),
+                    table td:nth-child(4),
+                    table td:nth-child(5),
+                    table td:nth-child(6) {
+                        text-align: right;
+                    }
+
+                    table thead th {
+                        background-color: #f0f0f0;
+                        font-weight: bold;
+                    }
+
+                    .red td {
+                        color: red;
+                        font-weight: bold;
+                    }
+                </style>")
+            html.WriteLine("<table>")
             html.WriteLine("<tr><th>Entity</th><th>Parts</th><th>Geometry Size</th><th>Percent</th></tr>")
             While SQLdr.Read
                 Form1.ProgressBar1.Value += 1
                 TotalEntity += 1
-                Dim poly As Polygon = GeoJsonToGeometry(SQLdr("geometry"))
-                partcount = poly.Parts.Count
-                TotalParts += partcount
-                html.WriteLine($"<tr><td>{Strings.Replace(SQLdr("Entity"), " ", "&nbsp;")}</td><td>{partcount:n0}</td><td>{SQLdr("size")}</td><td>{SQLdr("size") / TotalSize * 100:f1}</td></tr>")
+                Dim Entity = SafeStr(SQLdr("Entity"))
+                Dim geometry = SafeStr(SQLdr("geometry"))
+                Dim size = SafeInt(SQLdr("size"))
+                If IsDBNullorEmpty(geometry) Then
+                    partcount = 0
+                Else
+                    Dim poly As Polygon = GeoJsonToGeometry(geometry)
+                    partcount = poly.Parts.Count
+                    TotalParts += partcount
+                End If
+                html.WriteLine($"<tr><td>{Strings.Replace(Entity, " ", "&nbsp;")}</td><td>{partcount:n0}</td><td>{size}</td><td>{size / TotalSize * 100:f1}</td></tr>")
                 lines += 1
             End While
             html.WriteLine($"<tr><td>{TotalEntity}</td><td>{TotalParts:n0}</td><td>{TotalSize:n0}</td><td></td></tr>")
             html.WriteLine("</table>")
             AppendText(Form1.TextBox1, $"{lines} lines written To html file{vbCrLf}")
+            OpenHtml(htmlFile)
         End Using
     End Sub
     Sub KMLFileSize()
@@ -129,7 +170,8 @@ Module Reports
         Dim lines As Integer = 0, TotalFolders As Integer = 0, FolderSize As Integer = 0, TotalSubFolders As Integer = 0, TotalPlacemarks As Integer = 0
         Dim TotalPolygons As Integer = 0, TotalLineStrings As Integer = 0
 
-        Using html As New StreamWriter($"{Application.StartupPath}\KML File Size.html", False)
+        Dim htmlFile = Path.Combine(Application.StartupPath, "KML File Size.html")
+        Using html As New StreamWriter(htmlFile, False)
             html.WriteLine("<!DOCTYPE html>")
             html.WriteLine("<style> table td:nth-child(2), td:nth-child(3), td:nth-child(4),td:nth-child(5),td:nth-child(6) {text-align:right;} .red td{color:red;font-weight: bold;}</style>")
             html.WriteLine("<table border=1>")
@@ -157,6 +199,7 @@ Module Reports
             html.WriteLine($"<tr><td>{TotalFolders}</td><td>{TotalSubFolders:n0}</td><td>{TotalPlacemarks:n0}</td><td>{TotalPolygons:n0}</td><td>{TotalLineStrings:n0}</td><td>{FolderSize:n0}</td></tr>")
             html.WriteLine("</table>")
             AppendText(Form1.TextBox1, $"{lines} lines written To html file{vbCrLf}")
+            OpenHtml(htmlFile)
         End Using
     End Sub
 End Module

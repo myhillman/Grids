@@ -364,31 +364,7 @@ Module RetrieveGeometry
             _reader = New WKTReader()
             _writer = New WKTWriter()
         End Sub
-
-        Public Async Function BuildDxccGeometryAsync(def As DxccDefinition) As Task(Of String)
-            Dim cleaned As New List(Of NetTopologySuite.Geometries.Geometry)
-
-            ' 1. Load and clean each geometry
-            For Each part In def.Parts
-                Dim wkt = Await _cache.GetGeometryAsync(part.OsmId, part.OsmType)
-                Dim g = _reader.Read(wkt)
-
-                ' Clean topology (fixes self-intersections, dangling holes, etc.)
-                Dim fixedGeom = g.Buffer(0)
-
-                cleaned.Add(fixedGeom)
-            Next
-
-            ' 2. Union everything at once (much safer than pairwise)
-            Dim factory = cleaned(0).Factory
-            Dim geomCollection = factory.CreateGeometryCollection(cleaned.ToArray())
-
-            ' Clean again after union
-            Dim unioned = geomCollection.Union().Buffer(0)
-
-            Return _writer.Write(unioned)
-        End Function
-
+        
     End Class
     Public Function ParseExpression(expr As String) As List(Of (Op As String, OsmId As Long, OsmType As String))
         Dim tokens As New List(Of (String, Long, String))

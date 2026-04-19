@@ -4,6 +4,7 @@ Imports System.Text
 Imports System.Xml
 Imports System.Xml.XPath
 Imports System.Linq
+Imports DotSpatial.Projections.Transforms
 Imports Esri.ArcGISRuntime.Geometry
 Imports Microsoft.Data.Sqlite
 
@@ -165,80 +166,413 @@ Module KMLExport
         kml.WriteLine("</Folder>")
         AppendText(Form1.TextBox1, $" [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")
     End Sub
-    Sub BoundingBoxFolder(connect As SqliteConnection, kml As StreamWriter)
-        ' Create the Bounding Box folder
-        Const DensifyDegrees = 10        ' ensure lines have resolution so the follow lat/lon lines
-        Dim timer As New Stopwatch
 
-        timer.Start()
-        AppendText(Form1.TextBox1, $"Making KML for bounding boxes.")
-        kml.WriteLine("<Folder>")
-        kml.WriteLine("<name>Bounding Boxes</name>")
-        kml.WriteLine("<description>Bounding boxes sometimes necessary to filter query. For debugging only.</description>")
-        kml.WriteLine("<visibility>0</visibility>")
-        kml.WriteLine("<Style id=""bbox"">
-                  <IconStyle>
-                    <scale>0</scale> <!-- invisible icon -->
-                  </IconStyle>
-                  <LabelStyle>
-                    <color>ffffffff</color>
-                    <scale>1.2</scale>
-                  </LabelStyle>
-                  <LineStyle>
-                    <color>ffffffff</color>
-                    <width>2</width>
-                  </LineStyle>
-                  <PolyStyle>
-                    <color>00ffffff</color> <!-- fully transparent -->
-                    <fill>0</fill>
-                    <outline>1</outline>
-                  </PolyStyle>
-                </Style>")
+Sub BoundingBoxFolder(connect As SqliteConnection, kml As StreamWriter)
+    Const DensifyDegrees = 10
+    Dim labelpoint As MapPoint
+    Dim timer As New Stopwatch
 
-        Dim sql = connect.CreateCommand
-        sql.CommandText = "Select * FROM `DXCC` WHERE `Deleted`=0 And `bbox` Is Not NULL and bbox <> '' ORDER BY `Entity`"     ' fetch all boxes
-        Dim SQLdr = sql.ExecuteReader
-        While SQLdr.Read
-            Dim entity = SafeStr(SQLdr("Entity"))
-            Dim bbox = ParseBBoxOrPoly(SQLdr("bbox"))       ' box could be envelope, polygon or 2 polygon
-            If TypeOf bbox Is Polygon Then
-                Dim poly As Polygon = bbox
-                If poly.Parts.Count > 1 Then
-                    AppendText(Form1.TextBox1, $"bbox For {entity} crosses anti-meridian and has {poly.Parts.Count} parts{vbCrLf}")
-                    For each prt In poly.Parts
-                        AppendText(Form1.TextBox1,$"Area = {PolygonArea(prt.points)}{vbCrLf}")
-                    Next
-                End If
-            End If
-            ' Display bounding box 
-            bbox = DensifyCleanMergeOrient(bbox, DensifyDegrees)
-            If TypeOf bbox Is Polygon Then
-                Dim poly As Polygon = bbox
-                If poly.Parts.Count > 1 Then
-                    AppendText(Form1.TextBox1, $"bbox For {entity} crosses anti-meridian and has {poly.Parts.Count} parts{vbCrLf}")
-                    For each prt In poly.Parts
-                        AppendText(Form1.TextBox1,$"Area = {PolygonArea(prt.points)}{vbCrLf}")
-                    Next
-                End If
-            End If
-            WritePolygonWithHoverName(kml, entity, bbox)
-        End While
-        SQLdr.Close()
-        kml.WriteLine("</Folder>")
-        timer.Stop()
-        AppendText(Form1.TextBox1, $" [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")
-    End Sub
-    Sub WritePolygonWithHoverName(kml As StreamWriter, name As String, poly As Polygon)
+    timer.Start()
+    AppendText(Form1.TextBox1, $"Making KML for bounding boxes.")
+    kml.WriteLine("<Folder>")
+    kml.WriteLine("<name>Bounding Boxes</name>")
+    kml.WriteLine("<description>Bounding boxes sometimes necessary to filter query. For debugging only.</description>")
+    kml.WriteLine("<visibility>0</visibility>")
+    kml.WriteLine("<Style id=""bbox"">
+              <IconStyle>
+                <scale>0</scale>
+              </IconStyle>
+              <LabelStyle>
+                <color>ffffffff</color>
+                <scale>1.2</scale>
+              </LabelStyle>
+              <LineStyle>
+                <color>ffffffff</color>
+                <width>2</width>
+              </LineStyle>
+              <PolyStyle>
+                <color>00ffffff</color>
+                <fill>0</fill>
+                <outline>1</outline>
+              </PolyStyle>
+            </Style>")
+
+    Dim sql = connect.CreateCommand
+    sql.CommandText = "Select * FROM `DXCC` WHERE `Deleted`=0 And `bbox` Is Not NULL and bbox <> '' ORDER BY `Entity`"
+    Dim SQLdr = sql.ExecuteReader
+
+    While SQLdr.Read
+        Dim entity = SafeStr(SQLdr("Entity"))
+        DebugOutput = (entity = "Fiji")
+
+        Dim bbox = ParseBBoxOrPoly(SQLdr("bbox"))
+
         kml.WriteLine("<Placemark>")
-        kml.WriteLine($"  <name>{KMLescape(name)}</name>")
+        kml.WriteLine($"  <name>{KMLescape(entity)}</name>")
         kml.WriteLine("  <styleUrl>#bbox</styleUrl>")
-        Dim labelpoint As MapPoint = GeometryEngine.LabelPoint(poly)
+
+        ' Label point
+        If TypeOf bbox Is Envelope Then
+            With bbox.Extent
+                Dim cx = (.XMin + .XMax) / 2.0
+                Dim cy = (.YMin + .YMax) / 2.0
+                labelpoint = New MapPoint(cx, cy, SpatialReferences.Wgs84)
+            End With
+        Else
+            labelpoint = GeometryEngine.LabelPoint(bbox)
+        End If
         kml.WriteLine($"  <Point><coordinates>{labelpoint.X:f2},{labelpoint.Y:f2}</coordinates></Point>")
         kml.WriteLine("  <MultiGeometry>")
-        KMLPolygon(kml, poly, 1, True)
+
+        ' Collect polygons exactly as ParseBBoxOrPoly produced them
+        Dim polys As New List(Of Polygon)
+
+        If TypeOf bbox Is Envelope Then
+            Dim ring As New List(Of MapPoint) From {
+                New MapPoint(bbox.Extent.XMin, bbox.Extent.YMin),
+                New MapPoint(bbox.Extent.XMax, bbox.Extent.YMin),
+                New MapPoint(bbox.Extent.XMax, bbox.Extent.YMax),
+                New MapPoint(bbox.Extent.XMin, bbox.Extent.YMax),
+                New MapPoint(bbox.Extent.XMin, bbox.Extent.YMin)
+            }
+            Dim pb As New PolygonBuilder(bbox.SpatialReference)
+            pb.AddPart(ring)
+            polys.Add(pb.ToGeometry())
+
+        ElseIf TypeOf bbox Is Polygon Then
+            polys.Add(CType(bbox, Polygon))
+
+        ElseIf TypeOf bbox Is Multipart Then
+            Dim mp = CType(bbox, Multipart)
+            For Each part In mp.Parts
+                Dim pb As New PolygonBuilder(mp.SpatialReference)
+                pb.AddPart(part.Points)
+                polys.Add(pb.ToGeometry())
+            Next
+        End If
+
+        If DebugOutput Then Debug.WriteLine($"Fiji polys from bbox: {polys.Count}")
+
+        ' Densify + wrap + write each polygon as‑is
+        For Each p In polys
+            Dim finalPoly = DensifyAndWrapPolygon(p, DensifyDegrees)
+
+            If DebugOutput Then
+                Debug.WriteLine("---- RING ----")
+                For Each part In finalPoly.Parts
+                    Debug.WriteLine("---- RING 0 ----")
+                    For Each mp In part.Points
+                        Debug.WriteLine($"{mp.X}, {mp.Y}")
+                    Next
+                Next
+            End If
+
+            Dim ext = finalPoly.Extent
+            Dim dec = DecimalsForBbox(ext.XMin, ext.YMin, ext.XMax, ext.YMax)
+            KMLPolygon(kml, finalPoly, dec, True)
+        Next
+
         kml.WriteLine("  </MultiGeometry>")
         kml.WriteLine("</Placemark>")
+    End While
+
+    SQLdr.Close()
+    kml.WriteLine("</Folder>")
+    timer.Stop()
+    AppendText(Form1.TextBox1, $" [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")
+End Sub
+    Private Function DensifyAndWrapPolygon(src As Polygon,
+                                           densifyDegrees As Double) As Polygon
+
+        Dim sr = src.SpatialReference
+
+        ' Densify as polyline
+        Dim lb As New PolylineBuilder(sr)
+        For Each part In src.Parts
+            lb.AddPart(part.Points)
+        Next
+        Dim denseLine = GeometryEngine.Densify(lb.ToGeometry(), densifyDegrees)
+
+        ' Collect densified points (single ring per polygon in our bbox case)
+        Dim densePts As New List(Of MapPoint)
+        For Each p In CType(denseLine, Polyline).Parts(0).Points
+            densePts.Add(p)
+        Next
+
+        ' Wrap to [-180,180]
+        Dim wrapped As New List(Of MapPoint)
+        For Each p In densePts
+            Dim x = p.X
+            While x > 180 : x -= 360 : End While
+            While x < -180 : x += 360 : End While
+            wrapped.Add(New MapPoint(x, p.Y, sr))
+        Next
+
+        ' Build final polygon
+        Dim pb As New PolygonBuilder(SpatialReferences.Wgs84)
+        pb.AddPart(wrapped)
+        Return pb.ToGeometry()
+    End Function
+    Private Function SplitWrappedForKml(ring As List(Of MapPoint)) As List(Of List(Of MapPoint))
+        Const AM As Double = 180.0
+        Const EPS As Double = 1e-9
+
+        Dim parts As New List(Of List(Of MapPoint))
+        Dim current As New List(Of MapPoint)
+        current.Add(ring(0))
+
+        For i = 1 To ring.Count - 1
+            Dim p1 = current.Last()
+            Dim p2 = ring(i)
+
+            Dim x1 = p1.X
+            Dim x2 = p2.X
+
+            Dim touchesOrCrosses = _
+                    ((x1 <= AM + EPS AndAlso x2 >= AM - EPS) OrElse _
+                     (x1 >= AM - EPS AndAlso x2 <= AM + EPS)) _
+                    AndAlso (Math.Abs(x1 - x2) > EPS)
+
+            If touchesOrCrosses Then
+                ' intersection at x = 180
+                Dim t = (AM - x1) / (x2 - x1)
+                Dim y = p1.Y + t * (p2.Y - p1.Y)
+
+                current.Add(New MapPoint(AM, y, p1.SpatialReference))
+                parts.Add(New List(Of MapPoint)(current))
+
+                current = New List(Of MapPoint)
+                current.Add(New MapPoint(AM, y, p1.SpatialReference))
+            End If
+
+            current.Add(p2)
+        Next
+
+        parts.Add(current)
+
+        ' close rings
+        For Each prt In parts
+            Dim f = prt(0)
+            Dim l = prt(prt.Count - 1)
+            If f.X <> l.X OrElse f.Y <> l.Y Then prt.Add(f)
+        Next
+
+        Return parts
+    End Function
+
+
+    Private Function PreparePolygonForKml(poly As Polygon,
+                                          densifyDegrees As Double) As List(Of Polygon)
+
+        Dim sr = poly.SpatialReference
+        Dim result As New List(Of Polygon)
+
+        For Each part In poly.Parts
+            Dim rawRing = part.Points.ToList()
+
+            ' 1. unwrap for safe geometry ops
+            Dim unwrapped = UnwrapRing(rawRing)
+            Dim ccw = NormalizeRingCCW(unwrapped)
+
+            ' 2. densify in unwrapped space (optional)
+            Dim workRing = ccw
+            If densifyDegrees > 0 Then
+                Dim lb As New PolylineBuilder(sr)
+                lb.AddPart(workRing)
+                Dim denseLine = GeometryEngine.Densify(lb.ToGeometry(), densifyDegrees)
+
+                Dim densePts As New List(Of MapPoint)
+                For Each p In CType(denseLine, Polyline).Parts(0).Points
+                    densePts.Add(p)
+                Next
+                workRing = densePts
+            End If
+
+            ' 3. wrap for export
+            Dim wrapped = WrapBackTo180(workRing)
+
+            ' 4. split in WRAPPED space for KML
+            Dim splitParts = SplitWrappedForKml(wrapped)
+
+            ' 5. build polygons
+            For Each r In splitParts
+                Dim pb As New PolygonBuilder(sr)
+                pb.AddPart(r)
+                result.Add(pb.ToGeometry())
+            Next
+        Next
+
+        Return result
+    End Function
+
+    ' Unwrap a ring so no edge has |Δlon| > 180
+Private Function UnwrapRing(ring As List(Of MapPoint)) As List(Of MapPoint)
+    Dim out As New List(Of MapPoint)
+    If ring.Count = 0 Then Return out
+
+    Dim prev = ring(0).X
+    Dim offset As Double = 0
+
+    out.Add(New MapPoint(prev, ring(0).Y, ring(0).SpatialReference))
+
+    For i = 1 To ring.Count - 1
+        Dim lon = ring(i).X
+        Dim lat = ring(i).Y
+        Dim d = lon - prev
+
+        If d > 180 Then offset -= 360
+        If d < -180 Then offset += 360
+
+        out.Add(New MapPoint(lon + offset, lat, ring(i).SpatialReference))
+        prev = lon
+    Next
+
+    Return out
+End Function
+
+' Enforce CCW orientation on an unwrapped ring
+Private Function NormalizeRingCCW(ring As List(Of MapPoint)) As List(Of MapPoint)
+    Dim pts = New List(Of MapPoint)(ring)
+
+    ' ensure closed
+    If pts.Count > 0 Then
+        Dim f = pts(0)
+        Dim l = pts(pts.Count - 1)
+        If f.X <> l.X OrElse f.Y <> l.Y Then pts.Add(f)
+    End If
+
+    ' signed area
+    Dim area As Double = 0
+    For i = 0 To pts.Count - 2
+        Dim p1 = pts(i)
+        Dim p2 = pts(i + 1)
+        area += (p1.X * p2.Y) - (p2.X * p1.Y)
+    Next
+    area /= 2.0
+
+    If area < 0 Then pts.Reverse()
+    Return pts
+End Function
+
+' Split an UNWRAPPED ring at x = 180 (antimeridian)
+Private Function SplitRingAt180Unwrapped(ring As List(Of MapPoint)) As List(Of List(Of MapPoint))
+    Const AM As Double = 180.0
+    Const EPS As Double = 1e-9
+
+    Dim parts As New List(Of List(Of MapPoint))
+    If ring Is Nothing OrElse ring.Count = 0 Then Return parts
+
+    Dim current As New List(Of MapPoint)
+    current.Add(ring(0))
+
+    For i = 1 To ring.Count - 1
+        Dim p1 = current.Last()
+        Dim p2 = ring(i)
+
+        Dim x1 = p1.X
+        Dim y1 = p1.Y
+        Dim x2 = p2.X
+        Dim y2 = p2.Y
+
+        Dim crosses = (x1 < AM - EPS AndAlso x2 > AM + EPS) OrElse
+                      (x1 > AM + EPS AndAlso x2 < AM - EPS)
+
+        If crosses Then
+            Dim t = (AM - x1) / (x2 - x1)
+            Dim y = y1 + t * (y2 - y1)
+
+            current.Add(New MapPoint(AM, y, p1.SpatialReference))
+            parts.Add(New List(Of MapPoint)(current))
+
+            current = New List(Of MapPoint)
+            current.Add(New MapPoint(AM, y, p1.SpatialReference))
+        End If
+
+        current.Add(p2)
+    Next
+
+    parts.Add(current)
+
+    ' close each part
+    Dim finalParts As New List(Of List(Of MapPoint))
+    For Each prt In parts
+        If prt.Count < 3 Then Continue For
+        Dim f = prt(0)
+        Dim l = prt(prt.Count - 1)
+        If f.X <> l.X OrElse f.Y <> l.Y Then prt.Add(f)
+        finalParts.Add(prt)
+    Next
+
+    Return finalParts
+End Function
+
+' Wrap longitudes back to [-180,180] for export
+Private Function WrapBackTo180(ring As List(Of MapPoint)) As List(Of MapPoint)
+    Dim out As New List(Of MapPoint)
+    For Each p In ring
+        Dim x = p.X
+        While x > 180 : x -= 360 : End While
+        While x < -180 : x += 360 : End While
+        out.Add(New MapPoint(x, p.Y, p.SpatialReference))
+    Next
+    Return out
+End Function
+
+    Public Sub DumpPolygonParts(poly As Polygon, Optional label As String = "")
+        If Not String.IsNullOrEmpty(label) Then
+            Debug.WriteLine($"--- {label} ---")
+        End If
+
+        If poly Is Nothing Then
+            Debug.WriteLine("Polygon = NULL")
+            Return
+        End If
+
+        Debug.WriteLine($"Parts: {poly.Parts.Count}")
+
+        Dim partIndex As Integer = 0
+
+        For Each part In poly.Parts
+            partIndex += 1
+
+            Dim pts = part.Points
+            Debug.WriteLine($" Part {partIndex}: {pts.Count} points")
+
+            If pts.Count > 0 Then
+                Dim p0 = pts(0)
+                Dim p1 = pts(Math.Max(0, pts.Count - 1))
+
+                Debug.WriteLine($"   First: {p0.X}, {p0.Y}")
+                Debug.WriteLine($"   Last : {p1.X}, {p1.Y}")
+            End If
+        Next
+
+        Debug.WriteLine("-----------------------------")
     End Sub
+
+    Function DecimalsForBbox(minX As Double, minY As Double,
+                             maxX As Double, maxY As Double) As Integer
+
+        Dim dx As Double
+
+        ' Detect wrap BEFORE rounding
+        If minX > maxX Then
+            dx = (180 - minX) + (maxX + 180)
+        Else
+            dx = maxX - minX
+        End If
+
+        Dim dy = Math.Abs(maxY - minY)
+        Dim w = Math.Max(dx, dy)
+
+        If w >= 10 Then Return 1
+        If w >= 1 Then Return 2
+        If w >= 0.1 Then Return 3
+        If w >= 0.01 Then Return 4
+        If w >= 0.001 Then Return 5
+        Return 6
+    End Function
+
     Sub KMLLineString(kml As StreamWriter, linestring As Polyline, digits As Integer)
         ' Write a polyline to the kml file
         If linestring.Parts.Count > 1 Then kml.WriteLine("<MultiGeometry>")
@@ -298,72 +632,72 @@ Module KMLExport
 
     Sub KMLPolygon(kml As StreamWriter, poly As Polygon, digits As Integer, MultiGeometryOpen As Boolean)
 
-    Dim parts = poly.Parts.ToList()
+        Dim parts = poly.Parts.ToList()
 
-    ' Count outer rings (clockwise)
-    Dim outerCount As Integer = 0
-    For Each prt In parts
-        If PolygonArea(prt.Points) > 0 Then outerCount += 1
-    Next
+        ' Count outer rings (clockwise)
+        Dim outerCount As Integer = 0
+        For Each prt In parts
+            If PolygonArea(prt.Points) > 0 Then outerCount += 1
+        Next
 
-    ' If more than one outer ring → MultiGeometry
-    Dim useMulti As Boolean = (outerCount > 1 AndAlso Not MultiGeometryOpen)
-    If useMulti Then kml.WriteLine("<MultiGeometry>")
+        ' If more than one outer ring → MultiGeometry
+        Dim useMulti As Boolean = (outerCount > 1 AndAlso Not MultiGeometryOpen)
+        If useMulti Then kml.WriteLine("<MultiGeometry>")
 
-    Dim polygonOpen As Boolean = False
+        Dim polygonOpen As Boolean = False
 
-    For Each prt In parts
+        For Each prt In parts
 
-        Dim area = PolygonArea(prt.Points)
-        Dim isOuter As Boolean = (area > 0)
+            Dim area = PolygonArea(prt.Points)
+            Dim isOuter As Boolean = (area > 0)
 
-        If isOuter Then
+            If isOuter Then
 
-            ' Close previous polygon if open
-            If polygonOpen Then
-                kml.WriteLine("</Polygon>")
+                ' Close previous polygon if open
+                If polygonOpen Then
+                    kml.WriteLine("</Polygon>")
+                End If
+
+                ' Start new polygon
+                kml.WriteLine("<Polygon><tessellate>1</tessellate>")
+                kml.WriteLine("<outerBoundaryIs>")
+                polygonOpen = True
+
+                ' Write outer ring
+                kml.WriteLine("<LinearRing>")
+                Dim pts = prt.Points.ToList()
+                If Not pts(0).IsEqual(pts.Last()) Then pts.Add(pts(0))
+                KMLcoordinates(kml, pts, digits)
+                kml.WriteLine("</LinearRing>")
+                kml.WriteLine("</outerBoundaryIs>")
+
+            Else
+                ' Inner ring (hole)
+                If Not polygonOpen Then
+                    ' Defensive: inner ring without outer → ignore
+                    Continue For
+                End If
+
+                kml.WriteLine("<innerBoundaryIs>")
+                kml.WriteLine("<LinearRing>")
+                Dim pts = prt.Points.ToList()
+                If Not pts(0).IsEqual(pts.Last()) Then pts.Add(pts(0))
+                KMLcoordinates(kml, pts, digits)
+                kml.WriteLine("</LinearRing>")
+                kml.WriteLine("</innerBoundaryIs>")
+
             End If
 
-            ' Start new polygon
-            kml.WriteLine("<Polygon><tessellate>1</tessellate>")
-            kml.WriteLine("<outerBoundaryIs>")
-            polygonOpen = True
+        Next
 
-            ' Write outer ring
-            kml.WriteLine("<LinearRing>")
-            Dim pts = prt.Points.ToList()
-            If Not pts(0).IsEqual(pts.Last()) Then pts.Add(pts(0))
-            KMLcoordinates(kml, pts, digits)
-            kml.WriteLine("</LinearRing>")
-            kml.WriteLine("</outerBoundaryIs>")
-
-        Else
-            ' Inner ring (hole)
-            If Not polygonOpen Then
-                ' Defensive: inner ring without outer → ignore
-                Continue For
-            End If
-
-            kml.WriteLine("<innerBoundaryIs>")
-            kml.WriteLine("<LinearRing>")
-            Dim pts = prt.Points.ToList()
-            If Not pts(0).IsEqual(pts.Last()) Then pts.Add(pts(0))
-            KMLcoordinates(kml, pts, digits)
-            kml.WriteLine("</LinearRing>")
-            kml.WriteLine("</innerBoundaryIs>")
-
+        ' Close last polygon
+        If polygonOpen Then
+            kml.WriteLine("</Polygon>")
         End If
 
-    Next
+        If useMulti Then kml.WriteLine("</MultiGeometry>")
 
-    ' Close last polygon
-    If polygonOpen Then
-        kml.WriteLine("</Polygon>")
-    End If
-
-    If useMulti Then kml.WriteLine("</MultiGeometry>")
-
-End Sub
+    End Sub
 
 
     Function CrossesAntiMeridian(g As Geometry) As Boolean

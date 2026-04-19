@@ -199,7 +199,7 @@ Partial Public Class Form1
             sqlupd = connect.CreateCommand
 
             sql.CommandText = "SELECT count(*) FROM DXCC WHERE Entity <> 'Antarctica' AND (query <> '' OR bbox <> '') AND (ESRIjson IS NULL OR ESRIjson='')"
-            count = CInt(sql.ExecuteScalar)
+            count = SafeInt(sql.ExecuteScalar)
 
             ProgressBar1.Minimum = 0
             ProgressBar1.Value = 0

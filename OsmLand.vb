@@ -57,29 +57,125 @@ Public Module OsmLand
         Await Task.Delay(1000) ' Enforce 1-second delay between requests
         Return Await JsonDocument.ParseAsync(stream)
     End Function
-    Function BuildRelationPolygon(rel As JsonElement, elements As JsonElement, nodes As Dictionary(Of Long, MapPoint)) As Geometry
-        Dim rings As New List(Of Polygon)
+    Function BuildRelationPolygon(rel As JsonElement,
+                                     elements As JsonElement,
+                                     nodes As Dictionary(Of Long, MapPoint)) As Geometry
 
-        For Each member In rel.GetProperty("members").EnumerateArray()
-            If member.GetProperty("type").GetString() = "way" Then
-                Dim wid = member.GetProperty("ref").GetInt64()
+        ' Collect all ways for this relation
+        Dim wayRings = AssembleRelationRings(rel, elements, nodes)
 
-                Dim way = elements.EnumerateArray().
-                First(Function(e) e.GetProperty("type").GetString() = "way" AndAlso
-                                   e.GetProperty("id").GetInt64() = wid)
+        ' Build final multipolygon
+        Dim pb As New PolygonBuilder(SpatialReferences.Wgs84)
 
-                rings.Add(BuildWayPolygon(way, nodes))
-            End If
+        For Each ring In wayRings
+            pb.AddPart(ring)
         Next
 
-        If rings.Count = 1 Then
-            Return rings(0)
-        Else
-            Return GeometryEngine.Union(rings)
-        End If
+        Return pb.ToGeometry()
     End Function
+    Function AssembleRelationRings(rel As JsonElement,
+                                   elements As JsonElement,
+                                   nodes As Dictionary(Of Long, MapPoint)) As List(Of List(Of MapPoint))
 
-    Function BuildWayPolygon(way As JsonElement, nodes As Dictionary(Of Long, MapPoint)) As Polygon
+        Dim ways As New List(Of List(Of MapPoint))
+
+        ' Convert each way into a list of points (not closed)
+        For Each member In rel.GetProperty("members").EnumerateArray()
+            If member.GetProperty("type").GetString() <> "way" Then Continue For
+
+            Dim wid = member.GetProperty("ref").GetInt64()
+
+            Dim way = elements.EnumerateArray().
+                    Where(Function(e) e.GetProperty("type").GetString() = "way").
+                    Single(Function(e) e.GetProperty("id").GetInt64() = wid)
+
+            Dim pts = ExtractWayPoints(way, nodes)
+            If pts.Count > 1 Then ways.Add(pts)
+        Next
+
+        ' Now stitch the ways into rings
+        Return StitchWaysIntoRings(ways)
+    End Function
+    Function ExtractWayPoints(way As JsonElement,
+                              nodes As Dictionary(Of Long, MapPoint)) As List(Of MapPoint)
+
+        Dim pts As New List(Of MapPoint)
+
+        For Each nd In way.GetProperty("nodes").EnumerateArray()
+            Dim nid = nd.GetInt64()
+            If nodes.ContainsKey(nid) Then pts.Add(nodes(nid))
+        Next
+
+        Return pts
+    End Function
+    Function StitchWaysIntoRings(ways As List(Of List(Of MapPoint))) As List(Of List(Of MapPoint))
+
+    Dim rings As New List(Of List(Of MapPoint))
+
+    ' Work on a mutable list
+    Dim remaining = ways.ToList()
+
+    While remaining.Count > 0
+
+        ' Start a new chain
+        Dim chain = New List(Of MapPoint)(remaining(0))
+        remaining.RemoveAt(0)
+
+        Dim extended As Boolean = True
+
+        While extended
+            extended = False
+
+            For i = remaining.Count - 1 To 0 Step -1
+                Dim w = remaining(i)
+
+                ' chain end → w start
+                If chain.Last().IsEqual(w.First()) Then
+                    chain.AddRange(w.Skip(1))
+                    remaining.RemoveAt(i)
+                    extended = True
+                    Continue For
+                End If
+
+                ' chain end → w end (reverse w)
+                If chain.Last().IsEqual(w.Last()) Then
+                    w.Reverse()
+                    chain.AddRange(w.Skip(1))
+                    remaining.RemoveAt(i)
+                    extended = True
+                    Continue For
+                End If
+
+                ' w end → chain start
+                If w.Last().IsEqual(chain.First()) Then
+                    chain.InsertRange(0, w.Take(w.Count - 1))
+                    remaining.RemoveAt(i)
+                    extended = True
+                    Continue For
+                End If
+
+                ' w start → chain start (reverse w)
+                If w.First().IsEqual(chain.First()) Then
+                    w.Reverse()
+                    chain.InsertRange(0, w.Take(w.Count - 1))
+                    remaining.RemoveAt(i)
+                    extended = True
+                    Continue For
+                End If
+            Next
+        End While
+
+        ' If chain closes, store it as a ring
+        If chain.First().IsEqual(chain.Last()) Then
+            rings.Add(chain)
+        End If
+
+    End While
+
+    Return rings
+End Function
+
+   Function BuildWayPolygon(way As JsonElement, nodes As Dictionary(Of Long, MapPoint)) As Polygon
         Dim pts As New List(Of MapPoint)
 
         For Each nd In way.GetProperty("nodes").EnumerateArray()
@@ -94,7 +190,7 @@ Public Module OsmLand
 
         Return New Polygon(pts, SpatialReferences.Wgs84)
     End Function
-
+    
     Function BuildNodeDict(elements As JsonElement) As Dictionary(Of Long, MapPoint)
         Dim dict As New Dictionary(Of Long, MapPoint)
 

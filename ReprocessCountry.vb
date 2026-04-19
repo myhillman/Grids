@@ -47,7 +47,7 @@ Public Class ReprocessCountry
                 ' get the OSM data
                 Dim GeomOK As Boolean = True
                 If Me.cbDontRemake.Checked = False Then
-                    GeomOK = Await CreateGrids(connect, n.Key)
+                    GeomOK = Await BuildAndSaveDxccGeometry(n.Value,connect)
                 End If
                 If GeomOK Then
                     ' remake KML file if geometry is OK

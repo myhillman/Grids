@@ -82,7 +82,7 @@ Module Validate
             With Form1.ProgressBar1
                 .Minimum = 0
                 .Value = 0
-                .Maximum = CInt(ISOdr("Total"))
+                .Maximum = SafeInt(ISOdr("Total"))
             End With
             ISOdr.Close()
             ISO.WriteLine("<table border=1")
