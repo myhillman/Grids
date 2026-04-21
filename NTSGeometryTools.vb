@@ -1,15 +1,28 @@
-﻿Imports NetTopologySuite.Densify
+﻿Imports NetTopologySuite
+Imports NetTopologySuite.Densify
 Imports NetTopologySuite.Geometries
 Imports NetTopologySuite.Geometries.Utilities
 Imports NetTopologySuite.IO
+Imports NetTopologySuite.NtsGeometryServices
 Imports NetTopologySuite.Operation.Densify
 Imports NetTopologySuite.Operation.Valid
 
+
 Public Module NtsGeometryTools
+    Public factory As GeometryFactory = NtsGeometryServices.Instance.CreateGeometryFactory(4326)
+    Private ReadOnly _georeader As New GeoJsonReader()
+    Private ReadOnly _geowriter As New GeoJsonWriter()
 
-    Private ReadOnly _reader As New GeoJsonReader()
-    Private ReadOnly _writer As New GeoJsonWriter()
-
+    Public Function FromGeoJsonToNTS(geoJson As String) As Geometry
+        If String.IsNullOrWhiteSpace(geoJson) Then Return Nothing
+        Dim g = _georeader.Read(Of Geometry)(geoJson)
+        g.SRID = 4326   ' WGS84
+        Return g
+    End Function
+    Public Function FromNTSToGeoJson(g As Geometry) As String
+        If g Is Nothing Then Return ""
+        Return _geowriter.Write(g)
+    End Function
     ' ------------------------------------------------------------
     ' Normalize a single longitude into [-180, 180]
     ' ------------------------------------------------------------
@@ -99,7 +112,7 @@ Public Module NtsGeometryTools
 
         If String.IsNullOrWhiteSpace(geoJson) Then Return geoJson
 
-        Dim g = _reader.Read(Of Geometry)(geoJson)
+        Dim g = FromGeoJsonToNTS(geoJson)
         If g Is Nothing OrElse g.IsEmpty Then Return geoJson
 
         ' Fix topology
@@ -115,7 +128,7 @@ Public Module NtsGeometryTools
             g = Densifier.Densify(g, maxSegmentLength)
         End If
 
-        Return _writer.Write(g)
+        Return FromNTSToGeoJson(g)
     End Function
 
     ' ------------------------------------------------------------
@@ -124,7 +137,7 @@ Public Module NtsGeometryTools
     Public Function NormalizeGeoJson(geoJson As String) As String
         If String.IsNullOrWhiteSpace(geoJson) Then Return geoJson
 
-        Dim g = _reader.Read(Of Geometry)(geoJson)
+        Dim g = FromGeoJsonToNTS(geoJson)
         If g Is Nothing OrElse g.IsEmpty Then Return geoJson
 
         If Not g.IsValid Then
@@ -133,7 +146,7 @@ Public Module NtsGeometryTools
 
         g = NormalizeCoords(g)
 
-        Return _writer.Write(g)
+        Return FromNTSToGeoJson(g)
     End Function
 
     ' ------------------------------------------------------------
@@ -142,7 +155,7 @@ Public Module NtsGeometryTools
     Public Function DensifyGeoJson(geoJson As String, maxSegmentLength As Double) As String
         If String.IsNullOrWhiteSpace(geoJson) OrElse maxSegmentLength <= 0 Then Return geoJson
 
-        Dim g = _reader.Read(Of Geometry)(geoJson)
+        Dim g = FromGeoJsonToNTS(geoJson)
         If g Is Nothing OrElse g.IsEmpty Then Return geoJson
 
         If Not g.IsValid Then
@@ -151,7 +164,7 @@ Public Module NtsGeometryTools
 
         g = Densifier.Densify(g, maxSegmentLength)
 
-        Return _writer.Write(g)
+        Return FromNTSToGeoJson(g)
     End Function
 
 End Module

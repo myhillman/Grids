@@ -10,11 +10,16 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <ApplicationIcon>earth-globe-grid-green_256.ico</ApplicationIcon>
     <EnableMySupport>true</EnableMySupport>
+    <ImportedNamespaces>Microsoft.Data.Sqlite=False,NetTopologySuite.Operation.Valid=False,System.Data=False,System.Drawing=False,System.Resources=False,System.Resources.Extensions=False,System.Runtime=False,System.Runtime.CompilerServices=False,System.Windows.Forms=False,Microsoft.VisualBasic=True,System=True,System.Collections=True,System.Collections.Generic=True,System.Diagnostics=True,System.Linq=True,System.Xml.Linq=True,System.Threading.Tasks=True,Grids=True</ImportedNamespaces>
   </PropertyGroup>
 
   <ItemGroup>
     <Content Include="earth-globe-grid-green_256.ico" />
   </ItemGroup>
+  <ItemGroup>
+  <Reference Remove="NetTopologySuite.IO.ShapeFile" />
+</ItemGroup>
+
 
   <ItemGroup>
     <PackageReference Include="Clipper2" Version="2.0.0" />
@@ -24,8 +29,8 @@
     <PackageReference Include="HtmlAgilityPack" Version="1.12.4" />
     <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="10.0.5" />
     <PackageReference Include="NetTopologySuite" Version="2.6.0" />
-    <PackageReference Include="NetTopologySuite.IO.Esri.Shapefile" Version="1.2.0" />
     <PackageReference Include="NetTopologySuite.IO.GeoJSON" Version="4.0.0" />
+    <PackageReference Include="NetTopologySuite.IO.Shapefile" Version="2.1.0" />
     <PackageReference Include="OsmSharp" Version="5.0.8" />
     <PackageReference Include="Polyliner.Net" Version="1.0.2" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.2" />
@@ -54,6 +59,7 @@
 
   <ItemGroup>
     <Import Include="Microsoft.Data.Sqlite" />
+    <Import Include="NetTopologySuite.Operation.Valid" />
     <Import Include="System.Data" />
     <Import Include="System.Drawing" />
     <Import Include="System.Resources" />

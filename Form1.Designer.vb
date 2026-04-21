@@ -62,7 +62,7 @@ Partial Class Form1
         GeometrySizeTableToolStripMenuItem = New ToolStripMenuItem()
         TestToolStripMenuItem = New ToolStripMenuItem()
         ParseBoxToolStripMenuItem = New ToolStripMenuItem()
-        KMLArcGISToolStripMenuItem = New ToolStripMenuItem()
+        KMLntsToolStripMenuItem = New ToolStripMenuItem()
         ConvertOPToToolStripMenuItem = New ToolStripMenuItem()
         MakeBboxKMLToolStripMenuItem = New ToolStripMenuItem()
         TestAATToolStripMenuItem = New ToolStripMenuItem()
@@ -311,7 +311,7 @@ Partial Class Form1
         ' 
         ' TestToolStripMenuItem
         ' 
-        TestToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {ParseBoxToolStripMenuItem, KMLArcGISToolStripMenuItem, ConvertOPToToolStripMenuItem, MakeBboxKMLToolStripMenuItem, TestAATToolStripMenuItem})
+        TestToolStripMenuItem.DropDownItems.AddRange(New ToolStripItem() {ParseBoxToolStripMenuItem, KMLntsToolStripMenuItem, ConvertOPToToolStripMenuItem, MakeBboxKMLToolStripMenuItem, TestAATToolStripMenuItem})
         TestToolStripMenuItem.Name = "TestToolStripMenuItem"
         TestToolStripMenuItem.Size = New Size(40, 20)
         TestToolStripMenuItem.Text = "Test"
@@ -322,11 +322,11 @@ Partial Class Form1
         ParseBoxToolStripMenuItem.Size = New Size(197, 22)
         ParseBoxToolStripMenuItem.Text = "ParseBox"
         ' 
-        ' KMLArcGISToolStripMenuItem
+        ' KMLntsToolStripMenuItem
         ' 
-        KMLArcGISToolStripMenuItem.Name = "KMLArcGISToolStripMenuItem"
-        KMLArcGISToolStripMenuItem.Size = New Size(197, 22)
-        KMLArcGISToolStripMenuItem.Text = "KML ArcGIS"
+        KMLntsToolStripMenuItem.Name = "KMLntsToolStripMenuItem"
+        KMLntsToolStripMenuItem.Size = New Size(197, 22)
+        KMLntsToolStripMenuItem.Text = "KML ArcGIS"
         ' 
         ' ConvertOPToToolStripMenuItem
         ' 
@@ -430,7 +430,7 @@ Partial Class Form1
     Friend WithEvents ReportsToolStripMenuItem As ToolStripMenuItem
     Friend WithEvents KMLFileSizeToolStripMenuItem As ToolStripMenuItem
     Friend WithEvents ImportLandSquareListToolStripMenuItem As ToolStripMenuItem
-    Friend WithEvents KMLArcGISToolStripMenuItem As ToolStripMenuItem
+    Friend WithEvents KMLntsToolStripMenuItem As ToolStripMenuItem
     Friend WithEvents FindIARURegionToolStripMenuItem As ToolStripMenuItem
     Friend WithEvents ConvertOPToToolStripMenuItem As ToolStripMenuItem
     Friend WithEvents MakeBboxKMLToolStripMenuItem As ToolStripMenuItem

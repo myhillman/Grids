@@ -6,11 +6,16 @@ Imports System.Text.RegularExpressions
 Imports System.Web
 Imports Esri.ArcGISRuntime.Data
 Imports Esri.ArcGISRuntime.Geometry
-
 Imports HtmlAgilityPack
-Imports Microsoft.Data.Sqlite
 Imports Microsoft.VisualBasic.FileIO
+Imports NetTopologySuite
+Imports NetTopologySuite.Geometries
+Imports NetTopologySuite.IO
+Imports NetTopologySuite.Simplify
+Imports NetTopologySuite.Features
 Imports PolylinerNet
+Imports System.Xml.Linq
+
 
 Module Import
     ' Module contains all import functions
@@ -44,49 +49,92 @@ Module Import
             AppendText(Form1.TextBox1, $"{updated} ISO6133 codes imported{vbCrLf}")
         End Using
     End Sub
-    Sub ImportEUASBorder()
-        ' Import the border kml file for EU/AS. It has 464 linestrings and 13 digit precision
-        ' We can compress it to one linestring and 4 dec places. Reduces size to 10%
-        Dim plb As New PolylineBuilder(SpatialReferences.Wgs84)
 
-        Dim doc = XDocument.Load($"{Application.StartupPath}\border.kml")    ' read the XML
-        Dim ns = doc.Root.Name.Namespace      ' get namespace name so we can qualify everything
-        Dim linestrings = doc.Descendants(ns + "LineString")       ' find all the linestrings
+    Sub ImportEUASBorder()
+
+        Dim factory As GeometryFactory = NtsGeometryServices.Instance.CreateGeometryFactory(4326)
+        Dim lineList As New List(Of LineString)
+
+        ' Load KML
+        Dim doc = XDocument.Load($"{Application.StartupPath}\border.kml")
+        Dim ns = doc.Root.Name.Namespace
+        Dim linestrings = doc.Descendants(ns + "LineString")
+
         AppendText(Form1.TextBox1, $"{linestrings.Count} linestrings loaded{vbCrLf}")
+
+        ' Parse each <coordinates> block
         For Each coordinates In linestrings.Descendants(ns + "coordinates")
-            Dim coords As List(Of String), linestr As New Part(SpatialReferences.Wgs84)
-            Dim value = coordinates.Value
-            value = Regex.Replace(value, "[^0-9\-\., ]", "")     ' remove noise characters
-            value = Trim(value)
-            coords = Split(value, " ").ToList   ' bust into coordinate pairs
-            linestr.Clear()
-            For Each coord In coords
-                Dim points = Split(coord, ",")
-                linestr.AddPoint(points(0), points(1))
+
+            Dim raw = coordinates.Value
+            raw = Regex.Replace(raw, "[^0-9\-\., ]", "")
+            raw = raw.Trim()
+
+            Dim coordPairs = raw.Split(" "c, StringSplitOptions.RemoveEmptyEntries)
+
+            Dim pts As New List(Of Coordinate)
+
+            For Each pair In coordPairs
+                Dim parts = pair.Split(","c)
+                If parts.Length >= 2 Then
+                    Dim lon = Double.Parse(parts(0))
+                    Dim lat = Double.Parse(parts(1))
+                    pts.Add(New Coordinate(lon, lat))
+                End If
             Next
-            plb.AddPart(linestr)
+
+            If pts.Count >= 2 Then
+                lineList.Add(factory.CreateLineString(pts.ToArray()))
+            End If
         Next
-        ' make polygon out of parts
-        Dim poly As New Polygon(plb.Parts)
-        Dim polyGeneralized = Generalize(poly)   ' reduce it in size
-        ' Now produce KML for border
+
+        ' Merge into a MultiLineString
+        Dim multi As MultiLineString = factory.CreateMultiLineString(lineList.ToArray())
+
+        Dim multiGeneralized = SimplifyLinework(multi, 1)
+
+        ' Output KML
         Using kml As New StreamWriter($"{Application.StartupPath}\KML\BorderEUAS.kml", False)
             kml.WriteLine(KMLheader)
             kml.WriteLine("<Placemark><styleUrl>#red</styleUrl>")
             kml.WriteLine("<name>Boundary between European and Asiatic Russia</name>")
             kml.WriteLine("<description>Generally accepted border between Europe and Asia.</description>")
             kml.WriteLine("<MultiGeometry>")
-            For Each p In polyGeneralized.Parts
+
+            ' NTS version of iterating parts
+            If TypeOf multiGeneralized Is LineString Then
+                Dim ls = DirectCast(multiGeneralized, LineString)
                 kml.WriteLine("<LineString>")
-                KMLcoordinates(kml, p.Points.ToList, 4)
+                WriteCoordinates(kml, ls.Coordinates, 4)
                 kml.WriteLine("</LineString>")
-            Next
+
+            ElseIf TypeOf multiGeneralized Is MultiLineString Then
+                Dim mls = DirectCast(multiGeneralized, MultiLineString)
+                For i = 0 To mls.NumGeometries - 1
+                    Dim ls = DirectCast(mls.GetGeometryN(i), LineString)
+                    kml.WriteLine("<LineString>")
+                    WriteCoordinates(kml, ls.Coordinates, 4)
+                    kml.WriteLine("</LineString>")
+                Next
+            End If
+
             kml.WriteLine("</MultiGeometry>")
             kml.WriteLine("</Placemark>")
             kml.WriteLine(KMLfooter)
         End Using
+
         AppendText(Form1.TextBox1, $"Done{vbCrLf}")
+
     End Sub
+    Private Function SimplifyLinework(
+                                      geom As NetTopologySuite.Geometries.Geometry,
+                                      tolerance As Double
+                                      ) As NetTopologySuite.Geometries.Geometry
+
+        Dim simplifier As New NetTopologySuite.Simplify.DouglasPeuckerSimplifier(geom)
+        simplifier.DistanceTolerance = tolerance
+        Return simplifier.GetResultGeometry()
+    End Function
+
     Public Class zonedata
         Public Property Id As String
         Public Property Polyline As String
@@ -106,301 +154,361 @@ Module Import
             Description = data(6)
         End Sub
     End Class
-    Async Sub ImportCQITUZones()
+    Public Async Sub ImportCQITUZones()
 
+        ' Import CQ and ITU zones by reverse engineering some old KML files by IV3TMM
         Dim ZoneCheck As New Dictionary(Of String, String) From {
-        {"CQ", "https://zone-check.eu/includes/zones.cq.js"},
-        {"ITU", "https://zone-check.eu/includes/zones.itu.js"}
+        {"CQ", "CQ.KML"},
+        {"ITU", "ITU.KML"}
     }
-        ' See https://developers.google.com/maps/documentation/utilities/polylinealgorithm
-
-        Using connect As New SqliteConnection(DXCC_DATA)
-            Await connect.OpenAsync()
-
-            Using httpClient As New HttpClient(),
-              zonedataWriter As New StreamWriter(Path.Combine(Application.StartupPath, "Zonedata.vb"), False)
-
-                httpClient.Timeout = TimeSpan.FromMinutes(10)
-                httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0")
-
-                For Each zc In ZoneCheck
-
-                    AppendText(Form1.TextBox1, $"Getting {zc.Key} data from {zc.Value}{vbCrLf}")
-
-                    ' ---------------------------------------------------------
-                    ' 1. Download JS file
-                    ' ---------------------------------------------------------
-                    Dim responseString As String = ""
-                    Try
-                        Using httpResult = Await httpClient.GetAsync(zc.Value, HttpCompletionOption.ResponseHeadersRead)
-                            httpResult.EnsureSuccessStatusCode()
-                            Using stream = Await httpResult.Content.ReadAsStreamAsync()
-                                Using reader As New StreamReader(stream)
-                                    responseString = Await reader.ReadToEndAsync()
-                                End Using
-                            End Using
-                        End Using
-                    Catch ex As Exception
-                        MsgBox(ex.Message, vbCritical, "zone-check request error")
-                        Continue For
-                    End Try
-
-                    AppendText(Form1.TextBox1, $"{responseString.Length} bytes retrieved{vbCrLf}")
-
-                    ' ---------------------------------------------------------
-                    ' 2. Parse JS array 
-                    ' ---------------------------------------------------------
-                    Dim zones As List(Of zonedata) = ParseZoneArray(zc.Key, responseString)
-                    AppendText(Form1.TextBox1, $"{zones.Count} {zc.Key} zones retrieved{vbCrLf}")
-
-                    ' ---------------------------------------------------------
-                    ' 3. Prepare SQL
-                    ' ---------------------------------------------------------
-                    Using tx = connect.BeginTransaction(),
-                      cmd As SqliteCommand = connect.CreateCommand()
-
-                        cmd.Transaction = tx
-
-                        ' Delete existing rows
-                        cmd.CommandText = "DELETE FROM ZoneLines WHERE Type = @type"
-                        cmd.Parameters.AddWithValue("@type", zc.Key)
-                        Await cmd.ExecuteNonQueryAsync()
-                        cmd.Parameters.Clear()
-
-                        ' Insert command
-                        cmd.CommandText = "INSERT INTO ZoneLines (Type, zone, geometry) VALUES (@type, @zone, @geom)"
-
-                        Dim polyliner As New Polyliner()
-
-                        ' ---------------------------------------------------------
-                        ' 4. Decode polylines and insert polygons
-                        ' ---------------------------------------------------------
-                        For Each z In zones
-
-                            Dim coords = polyliner.Decode(z.Polyline)
-                            Dim linestr As New List(Of MapPoint)
-                            ' nudge coordinates away from anti-meridian if needed to avoid problems with ArcGIS geometry processing. We can get away with a small nudge because the data is very coarse and we will be generalizing it anyway
-                            For Each c In coords
-                                Dim lon = c.Longitude
-                                Dim lat = c.Latitude
-                                linestr.Add(New MapPoint(lon, lat, SpatialReferences.Wgs84))
-                            Next
-
-                            ' Close polygon if needed
-                            If Not CoIncident(linestr.First, linestr.Last) Then
-                                linestr.Add(linestr.First)
-                            End If
-
-                            Dim poly As New Polygon(linestr)
-                            poly = poly.Generalize(0.2, False)
-                            poly = poly.Simplify()
-
-                            If poly Is Nothing OrElse poly.IsEmpty Then Continue For
-
-                            ' round the polygon to avoid 180
-                            Dim builder As New PolygonBuilder(SpatialReferences.Wgs84)
-                            Const EPS = 0.0001
-                            For Each part In poly.Parts
-                                Dim newPart As New List(Of MapPoint)
-
-                                For Each pt In part.Points
-                                    Dim lon = Math.Round(pt.X, 4)
-                                    Dim lat = Math.Round(pt.Y, 4)
-
-                                    ' Clamp to safe domain
-                                    If lon > 180 - EPS Then lon = 180 - EPS
-                                    If lon < -180 + EPS Then lon = -180 + EPS
-
-                                    newPart.Add(New MapPoint(lon, lat, SpatialReferences.Wgs84))
-                                Next
-
-                                builder.AddPart(newPart)
-                            Next
-                            poly = builder.ToGeometry()
-
-                            cmd.Parameters.Clear()
-                            cmd.Parameters.AddWithValue("@type", zc.Key)
-                            cmd.Parameters.AddWithValue("@zone", CInt(z.Id))
-                            cmd.Parameters.AddWithValue("@geom", GeometryToGeoJson(poly))
-
-                            Await cmd.ExecuteNonQueryAsync()
-                        Next
-
-                        Await tx.CommitAsync()
-                    End Using
-                Next
-            End Using
-        End Using
-
-        AppendText(Form1.TextBox1, $"Done{vbCrLf}")
+        For Each ZoneType In ZoneCheck
+            DecodeZone(ZoneType.Key, ZoneType.Value)
+        Next
     End Sub
 
-    ' ParseZoneArray
-    ' ---------------
-    ' Extracts and parses the CQ or ITU zone array from the downloaded JavaScript file.
-    ' The JS files contain arrays like:
-    '   var cqzones = [
-    '       ['01','polyline','mask','#006600','65','-140','desc'],
-    '       ...
-    '   ];
-    '
-    ' This parser:
-    '   • Locates the correct JS variable (cqzones or ituzones)
-    '   • Extracts ONLY the array text (from first "[" to matching "]]")
-    '   • Walks the array with a small state machine
-    '   • Handles single‑quoted strings safely (no JSON, no JS eval)
-    '   • Builds zonedata objects from each inner array
-    Private Function ParseZoneArray(target As String, js As String) As List(Of zonedata)
-        Dim varName = $"{target.ToLower()}zones"
-        Dim varIdx = js.IndexOf($"var {varName}", StringComparison.OrdinalIgnoreCase)
-        If varIdx = -1 Then Throw New Exception($"Variable {varName} not found")
+    Sub DecodeZone(ZoneType As String, FileName As String)
 
-        Dim openIdx = js.IndexOf("["c, varIdx)
-        If openIdx = -1 Then Throw New Exception($"Opening [ for {varName} not found")
+        Dim doc As XDocument = XDocument.Load(FileName)
+        Dim ns As XNamespace = "http://www.opengis.net/kml/2.2"
 
-        Dim depth As Integer = 0
-        Dim inString As Boolean = False
-        Dim escapeNext As Boolean = False
-        Dim closeIdx As Integer = -1
+        Dim linepattern As String, areapattern As String, AreaFolder As String
+        Select Case ZoneType
+            Case "CQ" : linepattern = "^Linea-(\d+)$" : areapattern = "^WAZ\s(\d+)$" : AreaFolder = "WAZ Area"
+            Case "ITU" : linepattern = "^XXX-(\d+)$" : areapattern = "^ITU\s(\d+)$" : AreaFolder = "ITU Area"
+            Case Else
+                Throw New Exception($"Unrecognised zone type {ZoneType}")
+        End Select
+        ' ---------------------------------------------------------
+        ' 1. Find the <Folder> with <name>Boundary</name> to extract zone lines
+        ' ---------------------------------------------------------
+        Dim boundariesFolder As XElement = doc.Descendants(ns + "Folder").FirstOrDefault(Function(f) (f.Element(ns + "name")?.Value.Trim() = "Boundary"))
+        If boundariesFolder Is Nothing Then Throw New Exception($"No boundary folder found")
 
-        For i = openIdx To js.Length - 1
-            Dim ch = js(i)
+        Dim areasFolder As XElement =
+                doc.Descendants(ns + "Folder").FirstOrDefault(Function(f) (f.Element(ns + "name")?.Value.Trim() = AreaFolder))
+        If areasFolder Is Nothing Then Throw New Exception($"No areas folder found")
 
-            If escapeNext Then
-                escapeNext = False
-                Continue For
-            End If
+        ' ---------------------------------------------------------
+        ' 2. Extract all <Placemark> nodes inside that folder
+        ' ---------------------------------------------------------
+        Dim Placemarks As IEnumerable(Of XElement) = boundariesFolder.Descendants(ns + "Placemark")
+        If Placemarks Is Nothing Then Throw New Exception($"No Placemarks found in boundary folder")
 
-            If ch = "\"c Then
-                escapeNext = True
-                Continue For
-            End If
+        Dim AreaPlacemarks As IEnumerable(Of XElement) = areasFolder.Descendants(ns + "Placemark")
+        If AreaPlacemarks Is Nothing Then Throw New Exception($"No Placemarks found in Area folder")
 
-            If ch = "'"c Then
-                inString = Not inString
-                Continue For
-            End If
+        ' ---------------------------------------------------------
+        ' 3. Extract all <coordinates> nodes from each placemark
+        ' ---------------------------------------------------------
+        Dim coords As New List(Of Coordinate)
 
-            If Not inString Then
-                If ch = "["c Then depth += 1
-                If ch = "]"c Then
-                    depth -= 1
-                    If depth = 0 Then
-                        closeIdx = i
-                        Exit For
-                    End If
-                End If
-            End If
-        Next
-
-        If closeIdx = -1 Then Throw New Exception($"End of {varName} array not found")
-
-        Dim jsarray = js.Substring(openIdx, closeIdx - openIdx + 1)
-
-        ' strip leading [[ and trailing ]];
-        Dim inner = jsarray.Substring(2, jsarray.Length - 2 - 3)  ' remove "[[" and "]];"
-
-        Dim entries = inner.Split(New String() {"],["}, StringSplitOptions.None)
-
-        Dim zones As New List(Of zonedata)
-
-        For Each entry In entries
-            ' entry looks like: '01','poly','mask','color',lat,lon,'desc'
-            Dim fields = entry.Split(","c)
-
-            If fields.Length < 7 Then Continue For
-
-            Dim id = fields(0).Trim().Trim("'"c)
-            Dim poly = fields(1).Trim().Trim("'"c)
-            Dim mask = fields(2).Trim().Trim("'"c)
-            Dim color = fields(3).Trim().Trim("'"c)
-            Dim lat = fields(4).Trim()
-            Dim lon = fields(5).Trim()
-            Dim desc = String.Join(",", fields.Skip(6)).Trim().Trim("'"c)
-
-            Dim data As New List(Of String) From {
-            id, poly, mask, color, lat, lon, desc
-        }
-
-            zones.Add(New zonedata(data))
-        Next
-
-        Return zones
-    End Function
-
-    Async Function ImportTimeZones() As Task
-        ' Import a timezone database
-        Dim myQueryFilter As New QueryParameters
-
-        Dim Features = Await ShapefileFeatureTable.OpenAsync(
-        "D:\GIS Data\Natural Earth\Timezones\ne_10m_time_zones.shp")
-
-        With myQueryFilter
-            .OutSpatialReference = SpatialReferences.Wgs84
-            .ReturnGeometry = True
-        End With
-
-        Dim Timezones = Await Features.QueryFeaturesAsync(myQueryFilter).ConfigureAwait(False)
-
-        With Form1.ProgressBar1
-            .Minimum = 0
-            .Value = 0
-            .Maximum = Timezones.Count
-        End With
-
+        Dim line = 1, number As Integer, gf As New GeometryFactory()
         Using connect As New SqliteConnection(DXCC_DATA)
             connect.Open()
+            ' remove existing lines for this zone type
+            Dim deleteCmd = connect.CreateCommand()
+            deleteCmd.CommandText = $"DELETE FROM ZoneLines WHERE Type = '{ZoneType}'"
+            deleteCmd.ExecuteNonQuery()
+            Dim delete1Cmd = connect.CreateCommand()
+            delete1Cmd.CommandText = $"DELETE FROM ZoneLabels WHERE Type = '{ZoneType}'"
+            delete1Cmd.ExecuteNonQuery()
+
+            Dim linescmd = connect.CreateCommand()
+            linescmd.CommandText = "INSERT INTO ZoneLines (Type, zone, geometry) VALUES ($type, $zone, $geom);"
+
+            Dim labelscmd = connect.CreateCommand()
+            labelscmd.CommandText = "INSERT INTO ZoneLabels (Type, zone, geometry) VALUES ($type, $zone, $geom);"
+            With Form1.ProgressBar1
+                .Minimum = 0
+                .Value = 0
+                .Maximum = Placemarks.Count
+            End With
+            For Each pm In Placemarks
+                ' get the name
+                Dim nameElement As XElement = pm.Element(ns + "name")
+
+                Dim m = Regex.Match(nameElement.Value, linepattern)
+                If m.Success Then
+                    number = Integer.Parse(m.Groups(1).Value)
+                End If
+                ' get the coordinates
+                Dim coordsElement As XElement = pm.Descendants(ns + "coordinates").FirstOrDefault()
+                Dim coordinates = Split(coordsElement.Value.Trim, " ")
+                coords.Clear()
+                For Each grp In coordinates
+                    Dim values = Split(grp, ",")
+                    Dim coord As New Coordinate(values(0), values(1))
+                    coords.Add(coord)
+                Next
+                ' Create the NTS LineString
+                Dim rawLine As LineString = gf.CreateLineString(coords.ToArray())
+
+                ' Split at anti-meridian
+                Dim splitGeom As NetTopologySuite.Geometries.Geometry = SplitAntiMeridian(rawLine, gf)
+
+                ' Densify each segment
+                Dim densified As NetTopologySuite.Geometries.Geometry = DensifyGeometry(splitGeom, 5.0)
+                ' Handle single or multiple LineStrings
+                If TypeOf densified Is LineString Then
+
+                    ' Single segment
+                    Dim geoJson = FromNTSToGeoJson(densified)
+                    linescmd.Parameters.Clear()
+                    linescmd.Parameters.AddWithValue("$type", ZoneType)
+                    linescmd.Parameters.AddWithValue("$zone", number)
+                    linescmd.Parameters.AddWithValue("$geom", geoJson)
+                    linescmd.ExecuteNonQuery()
+
+                ElseIf TypeOf densified Is GeometryCollection Then
+
+                    ' Multiple segments
+                    Dim gc As GeometryCollection = CType(densified, GeometryCollection)
+
+                    For i = 0 To gc.NumGeometries - 1
+                        Dim seg As NetTopologySuite.Geometries.Geometry = gc.GetGeometryN(i)
+
+                        If TypeOf seg Is LineString Then
+                            Dim geoJson = FromNTSToGeoJson(seg)
+                            linescmd.Parameters.Clear()
+                            linescmd.Parameters.AddWithValue("$type", ZoneType)
+                            linescmd.Parameters.AddWithValue("$zone", number)
+                            linescmd.Parameters.AddWithValue("$geom", geoJson)
+                            linescmd.ExecuteNonQuery()
+                        End If
+                    Next
+
+                Else
+                    Throw New Exception("Unexpected geometry type after AM split + densify.")
+                End If
+                line += 1
+                Form1.ProgressBar1.Value += 1
+            Next
+            ' Extract zone labels
+            line = 1
+            With Form1.ProgressBar1
+                .Minimum = 0
+                .Value = 0
+                .Maximum = AreaPlacemarks.Count
+            End With
+            For Each area In AreaPlacemarks
+                Dim nameElement As XElement = area.Element(ns + "name")
+                Dim m = Regex.Match(nameElement.Value, areapattern)
+                If m.Success Then
+                    number = Integer.Parse(m.Groups(1).Value)
+                End If
+                Dim coordsElement As XElement = area.Descendants(ns + "coordinates").FirstOrDefault()
+                Dim point = coordsElement.Value.Trim()
+                Dim coord = Split(point, ",")
+                Dim labelpoint = New Coordinate(coord(0), coord(1))
+                Dim pt As Point = gf.CreatePoint(labelpoint)
+                Dim GeoJson = FromNTSToGeoJson(pt)
+                labelscmd.Parameters.Clear()
+                labelscmd.Parameters.AddWithValue("$type", ZoneType)
+                labelscmd.Parameters.AddWithValue("$zone", number)
+                labelscmd.Parameters.AddWithValue("$geom", GeoJson)
+                labelscmd.ExecuteNonQuery()
+                line += 1
+                Form1.ProgressBar1.Value += 1
+            Next
+            AppendText(Form1.TextBox1, $"Imported {line - 1} {ZoneType} lines{vbCrLf}")
+        End Using
+    End Sub
+    ''' <summary>
+    ''' Splits a LineString into multiple LineStrings such that no segment crosses
+    ''' the anti-meridian (±180°). Longitudes are normalized to [-180, 180].
+    ''' </summary>
+    Private Function SplitAntiMeridian(ls As LineString, gf As GeometryFactory) As NetTopologySuite.Geometries.Geometry
+
+        Dim parts As New List(Of LineString)
+        Dim current As New List(Of Coordinate)
+
+        Dim prev As Coordinate = Nothing
+
+        For i = 0 To ls.NumPoints - 1
+
+            Dim c As Coordinate = ls.GetCoordinateN(i)
+            Dim lon As Double = NormalizeLon(c.X)
+            Dim lat As Double = c.Y
+            Dim curr As New Coordinate(lon, lat)
+
+            If prev IsNot Nothing Then
+
+                Dim prevLon = prev.X
+                Dim currLon = curr.X
+
+                ' Check if segment crosses AM
+                If Math.Abs(prevLon - currLon) > 180 Then
+
+                    ' Compute intersection latitude at AM
+                    Dim targetLon As Double = If(prevLon > 0, 180, -180)
+                    Dim t As Double = (targetLon - prevLon) / (currLon - prevLon)
+                    Dim interLat As Double = prev.Y + t * (curr.Y - prev.Y)
+
+                    ' Add intersection point to current segment
+                    current.Add(New Coordinate(targetLon, interLat))
+
+                    ' Close current segment
+                    parts.Add(gf.CreateLineString(current.ToArray()))
+
+                    ' Start new segment
+                    current = New List(Of Coordinate)
+                    current.Add(New Coordinate(If(targetLon = 180, -180, 180), interLat))
+                End If
+            End If
+
+            current.Add(curr)
+            prev = curr
+        Next
+
+        ' Add final segment
+        If current.Count >= 2 Then
+            parts.Add(gf.CreateLineString(current.ToArray()))
+        End If
+
+        If parts.Count = 1 Then
+            Return parts(0)
+        End If
+
+        Return gf.CreateGeometryCollection(parts.Cast(Of NetTopologySuite.Geometries.Geometry).ToArray())
+    End Function
+
+    ''' <summary>
+    ''' Normalizes longitude to [-180, 180].
+    ''' </summary>
+    Private Function NormalizeLon(lon As Double) As Double
+        While lon > 180
+            lon -= 360
+        End While
+        While lon < -180
+            lon += 360
+        End While
+        Return lon
+    End Function
+
+    ''' <summary>
+    ''' Imports Natural Earth timezone polygons from a GeoJSON file, groups all features
+    ''' by their timezone name, and produces a single merged <c>MultiPolygon</c> for each
+    ''' timezone.  
+    ''' <para>
+    ''' Each timezone in the source dataset may contain many individual polygons. These
+    ''' are collected, unioned, simplified, and orientation-corrected before being
+    ''' written to the <c>Timezones</c> table as one consolidated geometry.
+    ''' </para>
+    ''' <para>
+    ''' The <c>places</c> field is generated by combining the distinct <c>places</c>
+    ''' attributes from all polygons belonging to the same timezone. The <c>color</c>
+    ''' field is taken from the first feature in each group.
+    ''' </para>
+    ''' </summary>
+    ''' <remarks>
+    ''' This method clears the <c>Timezones</c> table before inserting new rows.
+    ''' Geometry is stored as GeoJSON.  
+    ''' The operation is asynchronous and performs all database writes using a single
+    ''' open SQLite connection.
+    ''' </remarks>
+    ''' <returns>
+    ''' A task representing the asynchronous import operation.
+    ''' </returns>
+    ''' <exception cref="IOException">
+    ''' Thrown if the GeoJSON file cannot be read.
+    ''' </exception>
+    ''' <exception cref="JsonException">
+    ''' Thrown if the GeoJSON content is invalid or cannot be parsed.
+    ''' </exception>
+    ''' <exception cref="SqliteException">
+    ''' Thrown if the database insert operations fail.
+    ''' </exception>
+
+    Async Function ImportTimeZones() As Task
+
+        Dim geoJsonPath As String = "D:\GIS Data\Natural Earth\Timezones\ne_10m_time_zones.json"
+
+        ' ---------------------------------------------------------
+        ' 1. Load GeoJSON
+        ' ---------------------------------------------------------
+        Dim reader As New GeoJsonReader()
+        Dim fc As NetTopologySuite.Features.FeatureCollection
+
+        Using sr As New StreamReader(geoJsonPath)
+            Dim json As String = Await sr.ReadToEndAsync()
+            fc = reader.Read(Of NetTopologySuite.Features.FeatureCollection)(json)
+        End Using
+
+        ' ---------------------------------------------------------
+        ' 2. Group features by timezone name
+        ' ---------------------------------------------------------
+        Dim groups =
+        fc.GroupBy(Function(f) f.Attributes("name").ToString()) _
+          .OrderBy(Function(g) Convert.ToSingle(g.Key)) ' numeric sort
+
+        Dim gf As New GeometryFactory()
+        Dim writer As New GeoJsonWriter()
+
+        Using conn As New SqliteConnection(DXCC_DATA)
+            Await conn.OpenAsync()
 
             ' Clear table
-            Using cmd = connect.CreateCommand()
-                cmd.CommandText = "DELETE FROM Timezones"
-                cmd.ExecuteNonQuery()
+            Using delCmd = conn.CreateCommand()
+                delCmd.CommandText = "DELETE FROM Timezones;"
+                delCmd.ExecuteNonQuery()
             End Using
 
-            ' Prepare INSERT command once
-            Using cmd = connect.CreateCommand()
+            ' Prepare insert
+            Using cmd = conn.CreateCommand()
                 cmd.CommandText =
-                "INSERT INTO Timezones (name, places, color, geometry) " &
-                "VALUES (@name, @places, @color, @geometry)"
+                "INSERT INTO Timezones (name, places, color, geometry) VALUES ($name, $places, $color, $geometry);"
 
-                Dim pName = cmd.CreateParameter()
-                pName.ParameterName = "@name"
-                cmd.Parameters.Add(pName)
+                cmd.Parameters.Add("$name", SqliteType.Text)
+                cmd.Parameters.Add("$places", SqliteType.Text)
+                cmd.Parameters.Add("$color", SqliteType.Text)
+                cmd.Parameters.Add("$geometry", SqliteType.Text)
 
-                Dim pPlaces = cmd.CreateParameter()
-                pPlaces.ParameterName = "@places"
-                cmd.Parameters.Add(pPlaces)
+                With Form1.ProgressBar1
+                    .Minimum = 0
+                    .Maximum = groups.Count()
+                    .Value = 0
+                End With
 
-                Dim pColor = cmd.CreateParameter()
-                pColor.ParameterName = "@color"
-                cmd.Parameters.Add(pColor)
+                ' ---------------------------------------------------------
+                ' 3. Process each timezone group
+                ' ---------------------------------------------------------
+                For Each g In groups
 
-                Dim pGeom = cmd.CreateParameter()
-                pGeom.ParameterName = "@geometry"
-                cmd.Parameters.Add(pGeom)
+                    Dim tzName As String = g.Key
 
-                ' Sort by name
-                Dim tzList = Timezones.Select(Function(f) f).OrderBy(Function(f) CSng(f.Attributes("name"))).ToList()
+                    ' Merge places
+                    Dim allPlaces As String =
+                    String.Join(", ",
+                        g.Select(Function(f) f.Attributes("places").ToString()) _
+                         .Distinct())
 
-                For Each timezone In tzList
-                    Dim name = timezone.Attributes("name")
-                    Dim places = timezone.Attributes("places")
-                    Dim color = timezone.Attributes("map_color6")
+                    ' Pick color (all polygons for a zone share the same)
+                    Dim color As String = g.First().Attributes("map_color6").ToString()
 
-                    ' --- GEOMETRY PIPELINE ---
-                    Dim poly As Polygon = timezone.Geometry
-                    'Debug.WriteLine($"""{name}"",""{places}"",{poly.Parts.Count}")
-                    poly = poly.Simplify()
+                    ' Collect all geometries
+                    Dim geoms As New List(Of NetTopologySuite.Geometries.Geometry)
+                    For Each f In g
+                        Dim ntsGeom As NetTopologySuite.Geometries.Geometry = f.Geometry
+                        If ntsGeom IsNot Nothing AndAlso Not ntsGeom.IsEmpty Then
+                            geoms.Add(ntsGeom)
+                        End If
+                    Next
 
-                    Dim polyGeneralized As Polygon = poly.Generalize(0.1, True)
-                    If polyGeneralized.IsEmpty Then polyGeneralized = poly
-                    polyGeneralized = FixRingOrientation(polyGeneralized)
+                    ' Build MultiPolygon
+                    Dim merged As NetTopologySuite.Geometries.Geometry = gf.BuildGeometry(geoms).Union()
 
-                    ' --- PARAMETER ASSIGNMENT ---
-                    pName.Value = name
-                    pPlaces.Value = places
-                    pColor.Value = color
-                    pGeom.Value = GeometryToGeoJson(polyGeneralized)
+                    ' Simplify
+                    Dim simplified = NetTopologySuite.Simplify.TopologyPreservingSimplifier.Simplify(merged, 0.1)
+                    If simplified Is Nothing OrElse simplified.IsEmpty Then simplified = merged
+
+                    ' Convert to GeoJSON
+                    Dim geoJson As String = writer.Write(simplified)
+
+                    ' Insert
+                    cmd.Parameters("$name").Value = tzName
+                    cmd.Parameters("$places").Value = allPlaces
+                    cmd.Parameters("$color").Value = color
+                    cmd.Parameters("$geometry").Value = geoJson
 
                     cmd.ExecuteNonQuery()
 
@@ -409,176 +517,316 @@ Module Import
             End Using
         End Using
 
-        AppendText(Form1.TextBox1, $"{Timezones.Count} timezones imported{vbCrLf}")
+        AppendText(Form1.TextBox1, $"Imported {groups.Count()} merged timezones{vbCrLf}")
+
+    End Function
+    ''' <summary>
+    ''' Ensures that polygon and multipolygon rings follow the correct KML/GeoJSON
+    ''' orientation rules.  
+    ''' <para>
+    ''' Exterior rings are forced to counter‑clockwise orientation, while interior
+    ''' rings (holes) are forced to clockwise orientation. This guarantees consistent
+    ''' winding order for downstream consumers and prevents rendering issues in
+    ''' mapping engines.
+    ''' </para>
+    ''' </summary>
+    ''' <param name="geom">
+    ''' The input geometry whose ring orientation should be normalized.
+    ''' </param>
+    ''' <returns>
+    ''' A geometry with corrected ring orientation. The original geometry is returned
+    ''' unchanged if no orientation adjustments are required.
+    ''' </returns>
+
+    Private Function FixOrientation(
+                                    geom As NetTopologySuite.Geometries.Geometry
+                                    ) As NetTopologySuite.Geometries.Geometry
+
+        If TypeOf geom Is NetTopologySuite.Geometries.Polygon Then
+            Return FixPolygonOrientation(DirectCast(geom, NetTopologySuite.Geometries.Polygon))
+        End If
+
+        If TypeOf geom Is NetTopologySuite.Geometries.MultiPolygon Then
+            Dim mp = DirectCast(geom, NetTopologySuite.Geometries.MultiPolygon)
+            Dim polys As New List(Of NetTopologySuite.Geometries.Polygon)
+
+            For i = 0 To mp.NumGeometries - 1
+                polys.Add(FixPolygonOrientation(DirectCast(mp.GetGeometryN(i),
+                                                           NetTopologySuite.Geometries.Polygon)))
+            Next
+
+            Return geom.Factory.CreateMultiPolygon(polys.ToArray())
+        End If
+
+        Return geom
     End Function
 
+    Private Function FixPolygonOrientation(
+                                           poly As NetTopologySuite.Geometries.Polygon
+                                           ) As NetTopologySuite.Geometries.Polygon
 
-    Async Function ImportIARURegions() As Task
-        ' Import IARU regions. Data from Tim Makins (EI8IC)
-        Dim myQueryFilter As New QueryParameters, sql As SqliteCommand, count As Integer = 0, GeneralizeDistance As Integer = 1000
-        Dim lines As New PolylineBuilder(SpatialReferences.Wgs84), OriginalCount As Integer = 0, DensifyCount As Integer = 0, GeneralizeCount As Integer = 0
+        Dim gf = poly.Factory
 
-        Dim Features = Await ShapefileFeatureTable.OpenAsync("D:\GIS Data\IARU\IARU Region Lines_50m_No_Edges_Simplified.shp")
-        With myQueryFilter
-            .OutSpatialReference = SpatialReferences.Wgs84     ' results in WGS84
-            .ReturnGeometry = True
+        ' Fix shell (must be CCW)
+        Dim shell = poly.Shell
+        Dim shellCoords = shell.Coordinates
+
+        If Not NetTopologySuite.Algorithm.Orientation.IsCCW(shellCoords) Then
+            shell = DirectCast(shell.Reverse(), NetTopologySuite.Geometries.LinearRing)
+        End If
+
+        ' Fix holes (must be CW)
+        Dim holes(poly.NumInteriorRings - 1) As NetTopologySuite.Geometries.LinearRing
+
+        For i = 0 To poly.NumInteriorRings - 1
+            Dim hole = poly.GetInteriorRingN(i)
+            Dim holeCoords = hole.Coordinates
+
+            If NetTopologySuite.Algorithm.Orientation.IsCCW(holeCoords) Then
+                hole = DirectCast(hole.Reverse(), NetTopologySuite.Geometries.LinearRing)
+            End If
+
+            holes(i) = hole
+        Next
+
+        Return gf.CreatePolygon(shell, holes)
+    End Function
+
+    Public Async Function ImportIARURegions() As Task
+        Dim GeoJson As String
+        Dim factory As GeometryFactory = NetTopologySuite.NtsGeometryServices.Instance.CreateGeometryFactory(4326)
+        Dim reader As New GeoJsonReader()
+
+        ' Load shapefile using ArcGIS Runtime
+        Dim table = Await ShapefileFeatureTable.OpenAsync("D:\GIS Data\IARU\IARU Region Lines_50m_No_Edges_Simplified.shp")
+        Dim qp As New QueryParameters With {
+        .OutSpatialReference = SpatialReferences.Wgs84,
+        .ReturnGeometry = True
+    }
+
+        Dim features = Await table.QueryFeaturesAsync(qp)
+        With Form1.ProgressBar1
+            .Minimum = 0
+            .Maximum = features.Count
+            .Value = 0
         End With
-        Dim Regions = Await Features.QueryFeaturesAsync(myQueryFilter).ConfigureAwait(False)           ' run query
-        AppendText(Form1.TextBox1, $"{Regions.Count} IARU boundary lines loaded{vbCrLf}")
+
         Using connect As New SqliteConnection(DXCC_DATA)
             connect.Open()
-            sql = connect.CreateCommand
-            sql.CommandText = "DELETE FROM IARU"       ' remove existing data
-            sql.ExecuteNonQuery()
 
-            For Each Reg In Regions
-                Dim geom As Polyline = Reg.Geometry
-                For Each line In geom.Parts
-                    geom = NormalizeCentralMeridian(geom)         ' normalize in case line crosses anti-meridian (one does)
-                    lines.AddPart(line)
+            Using cmd = connect.CreateCommand()
+                cmd.CommandText = "DELETE FROM IARU"
+                cmd.ExecuteNonQuery()
+            End Using
+
+            Using cmd = connect.CreateCommand()
+                cmd.CommandText = "INSERT INTO IARU (line, geometry) VALUES (@id, @geom)"
+
+                Dim pId = cmd.CreateParameter()
+                pId.ParameterName = "@id"
+                cmd.Parameters.Add(pId)
+
+                Dim pGeom = cmd.CreateParameter()
+                pGeom.ParameterName = "@geom"
+                cmd.Parameters.Add(pGeom)
+
+                Dim id As Integer = 0
+
+                For Each f In features
+
+                    GeoJson = FromArcGisToGeoJson(f.Geometry)   ' convert ArcGIS geometry to GeoJSON
+
+                    ' Convert GeoJSON → NTS
+                    Dim ntsGeom As NetTopologySuite.Geometries.Geometry = FromGeoJsonToNTS(GeoJson)
+
+                    ' Simplify linework (reduce points)
+                    Dim simplified As NetTopologySuite.Geometries.Geometry = DouglasPeuckerSimplifier.Simplify(ntsGeom, 0.01)
+
+                    ' Densify each segment
+                    Dim densified As NetTopologySuite.Geometries.Geometry = DensifyGeometry(simplified, 5.0)
+
+                    If TypeOf densified Is LineString Then
+
+                        ' Single segment
+                        GeoJson = FromNTSToGeoJson(densified)
+                        id += 1
+                        pId.Value = id
+                        pGeom.Value = geoJson
+                        cmd.ExecuteNonQuery()
+
+                    ElseIf TypeOf densified Is GeometryCollection Then
+
+                        ' Multiple segments
+                        Dim gc As GeometryCollection = CType(densified, GeometryCollection)
+
+                        For i = 0 To gc.NumGeometries - 1
+                            Dim seg As NetTopologySuite.Geometries.Geometry = gc.GetGeometryN(i)
+
+                            If TypeOf seg Is LineString Then
+                                GeoJson = FromNTSToGeoJson(seg)
+                                id += 1
+                                pId.Value = id
+                                pGeom.Value = geoJson
+                                cmd.ExecuteNonQuery()
+                            End If
+                        Next
+
+                    Else
+                        Throw New Exception("Unexpected geometry type after AM split + densify.")
+                    End If
+
+                    Form1.ProgressBar1.Value += 1
                 Next
-            Next
-            ' Now add all lines to database
-            Dim geometry = lines.ToGeometry
-            For Each prt In geometry.Parts
-                OriginalCount += prt.Points.Count
-            Next
-            geometry = geometry.Densify(5).Simplify
-            For Each prt In geometry.Parts
-                DensifyCount += prt.Points.Count
-            Next
-            'Dim GeneralizeAngle As Double = Form1.RadtoDeg(Math.Asin(GeneralizeDistance / Form1.EARTH_RADIUS))   ' angle for Generalize
-            'geometry = geometry.Generalize(GeneralizeAngle, True)
-            'For Each prt In geometry.Parts
-            '    GeneralizeCount += prt.Points.Count
-            'Next
-            For Each line In geometry.Parts
-                count += 1
-                Dim geo = New Polyline(line.Points).ToJson
-                sql.CommandText = $"INSERT INTO IARU (line,geometry) VALUES ({count},'{geo}')"
-                sql.ExecuteNonQuery()
-            Next
-            AppendText(Form1.TextBox1, $"Linestrings {geometry.Parts.Count}, Original {OriginalCount}, Densify {DensifyCount}, Generalize {GeneralizeCount}{vbCrLf}")
+            End Using
         End Using
+        AppendText(Form1.TextBox1, $"Imported {features.Count} IARU regions{vbCrLf}")
     End Function
 
-    Async Function ImportAntarctica() As Task
-        ' Get the country boundary for Antarctica. No useful one in OSM
-        Dim qp As New QueryParameters
-        Dim Features = Await ShapefileFeatureTable.OpenAsync("D:\GIS Data\World countries generalized\World_Countries_Generalized.shp")
-        Using connect As New SqliteConnection(DXCC_DATA)
-            Dim sql As SqliteCommand, sqlDR As SqliteDataReader
-            connect.Open()
-            sql = connect.CreateCommand
-            ' get the bounding polygon
-            sql.CommandText = "SELECT * FROM DXCC WHERE Entity='Antarctica'"
-            sqlDR = sql.ExecuteReader
-            sqlDR.Read()
-            Dim Antarctica As Polygon = ParsebBoxorpoly(sqlDR("bbox"))
-            sqlDR.Close()
-            With qp
-                .WhereClause = "COUNTRY='Antarctica'"            ' get all features
-                .Geometry = Antarctica
-                .ReturnGeometry = True
-                .OutSpatialReference = SpatialReferences.Wgs84
-                .SpatialRelationship = SpatialRelationship.Intersects
-            End With
-            Dim fqr = Await Features.QueryFeaturesAsync(qp)
-            Dim plb As New Esri.ArcGISRuntime.Geometry.PolygonBuilder(SpatialReferences.Wgs84)
-            For Each f In fqr
-                Dim geom As Polygon = f.Geometry
-                For Each p In geom.Parts
-                    plb.AddPart(p)
-                Next
-            Next
-            Dim poly As New Polygon(plb.Parts)
-            'poly = poly.Intersection(Antarctica)        ' remove unwanted bits
-            Dim polyGeneralized = GeneralizeByPart(poly)   ' reduce it in size
-            Dim geometry = GeometryToGeoJson(polyGeneralized)           ' convert to geojson
-            ' Save in database
-            sql.CommandText = "UPDATE DXCC SET geometry=@geom WHERE Entity=@entity"
-            sql.Parameters.Clear()
-            sql.Parameters.AddWithValue("@geom", geometry)
-            sql.Parameters.AddWithValue("@entity", "Antarctica")
-            sql.ExecuteNonQuery()
-
-        End Using
-        AppendText(Form1.TextBox1, $"Done{vbCrLf}")
+    Public Async Function ImportAntarctica() As Task
+        ' DONT NEED THIS ANYMORE - the data in NE is OK
+        AppendText(Form1.TextBox1, "Obsolete" & vbCrLf)
     End Function
 
-    Async Function ImportAntarcticBases() As Task
+
+    Public Async Function ImportAntarcticBases() As Task
+
         Dim responseString As String = ""
-        Using httpClient As New System.Net.Http.HttpClient()
-            httpClient.Timeout = New TimeSpan(0, 10, 0)        ' 10 min timeout
+
+        ' ---------------------------------------------------------
+        ' 1. Download HTML
+        ' ---------------------------------------------------------
+        Using httpClient As New HttpClient()
+            httpClient.Timeout = TimeSpan.FromMinutes(10)
+
             Dim url = "https://www.coolantarctica.com/Community/antarctic_bases.php"
+
             Try
-                Dim httpResult As System.Net.Http.HttpResponseMessage = Await httpClient.GetAsync(url)
+                Dim httpResult = Await httpClient.GetAsync(url)
                 httpResult.EnsureSuccessStatusCode()
                 responseString = Await httpResult.Content.ReadAsStringAsync()
             Catch ex As HttpRequestException
                 MsgBox($"{ex.Message}{vbCrLf}url={url}", vbCritical + vbOKOnly, "Retrieve error")
+                Return
             End Try
         End Using
 
-        Dim sql As SqliteCommand
+        ' ---------------------------------------------------------
+        ' 2. Parse HTML
+        ' ---------------------------------------------------------
+        Dim replacements As New Dictionary(Of String, String) From {
+        {"&deg;", "°"},
+        {"&#39;", "'"},
+        {"&quot;", """"}
+    }
+
+        Dim allowedChars As String = "(\t|\n|&nbsp;)"
+        Dim htmldoc As New HtmlDocument()
+        htmldoc.LoadHtml(responseString)
+
+        Dim table = htmldoc.DocumentNode.SelectSingleNode("//table")
+        Dim rows = table.SelectNodes("tr")
+
+        ' ---------------------------------------------------------
+        ' 3. SQL setup
+        ' ---------------------------------------------------------
         Using connect As New SqliteConnection(DXCC_DATA)
             connect.Open()
-            sql = connect.CreateCommand
-            ' Delete existing data
+
+            Dim sql = connect.CreateCommand()
             sql.CommandText = "DELETE FROM Antarctic"
             sql.ExecuteNonQuery()
-            ' Dim allowedChars As String = "[^0-9a-zA-Z\-\:\./°\'\""]"
-            Dim replacements As New Dictionary(Of String, String) From {
-            {"&deg;", "°"},
-            {"&#39;", "'"},
-            {"&quot;", """"}
-            }
-            Dim allowedChars As String = "(\t|\n|&nbsp;)"
-            Dim htmldoc As New HtmlDocument()
-            htmldoc.LoadHtml(responseString)
-            Dim table = htmldoc.DocumentNode.SelectSingleNode("//table")
-            Dim rows = table.SelectNodes("tr")
+
             With Form1.ProgressBar1
                 .Minimum = 0
                 .Value = 0
                 .Maximum = rows.Count - 1
             End With
-            For row = 0 To rows.Count - 2
+
+            ' ---------------------------------------------------------
+            ' 4. Process each row
+            ' ---------------------------------------------------------
+            For row = 0 To rows.Count - 2       ' ignore totals row
+
                 Form1.ProgressBar1.Value += 1
-                Dim bgcolor = rows(row).SelectNodes("td").Item(0).Attributes("bgcolor")
-                Dim open As String
-                If bgcolor Is Nothing Then open = "Summer only" Else open = "Year round"
-                Dim Name = HttpUtility.HtmlDecode(rows(row).SelectNodes("td").Item(0).InnerText)
-                Name = Regex.Replace(Name, allowedChars, "")
-                Dim nation = HttpUtility.HtmlDecode(rows(row).SelectNodes("td").Item(1).InnerText)
-                nation = Regex.Replace(nation, allowedChars, "")
-                Dim coordinates = HttpUtility.HtmlDecode(rows(row).SelectNodes("td").Item(2).InnerText)
-                coordinates = Regex.Replace(coordinates, allowedChars, "")
-                For Each rep In replacements
-                    coordinates = coordinates.Replace(rep.Key, rep.Value)
-                Next
-                Dim coord As MapPoint = CoordinateFormatter.FromLatitudeLongitude(coordinates, SpatialReferences.Wgs84)  ' DD MM SS to decimal
-                Dim situation = HttpUtility.HtmlDecode(rows(row).SelectNodes("td").Item(3).InnerText)
-                situation = Regex.Replace(situation, allowedChars, "")
-                Dim altitude = HttpUtility.HtmlDecode(rows(row).SelectNodes("td").Item(4).InnerText)
-                altitude = Regex.Replace(altitude, allowedChars, "")
-                sql.CommandText = "
-                            INSERT INTO Antarctic (open, name, nation, coordinates, situation, altitude)
-                            VALUES (@open, @name, @nation, @coords, @situation, @altitude)
-                        "
+
+                Dim tds = rows(row).SelectNodes("td")
+                If tds Is Nothing OrElse tds.Count < 5 Then Continue For
+
+                Dim bgcolor = tds(0).Attributes("bgcolor")
+                Dim open As String = If(bgcolor Is Nothing, "Summer only", "Year round")
+
+                Dim name = CleanText(tds(0).InnerText, allowedChars)
+                Dim nation = CleanText(tds(1).InnerText, allowedChars)
+
+                Dim coordinates = ExtractLatLon(tds(2))
+                Dim lat = coordinates.Item1
+                Dim lon = coordinates.Item2
+
+                Dim situation = CleanText(tds(3).InnerText, allowedChars)
+                Dim altitude = CleanText(tds(4).InnerText, allowedChars)
+
+                sql.CommandText =
+                "INSERT INTO Antarctic (open, name, nation, coordinates, situation, altitude) " &
+                "VALUES (@open, @name, @nation, @coords, @situation, @altitude)"
 
                 sql.Parameters.Clear()
                 sql.Parameters.AddWithValue("@open", open)
-                sql.Parameters.AddWithValue("@name", Name)
+                sql.Parameters.AddWithValue("@name", name)
                 sql.Parameters.AddWithValue("@nation", nation)
-                sql.Parameters.AddWithValue("@coords", coord.ToJson)
+                sql.Parameters.AddWithValue("@coords", $"{{""type"":""Point"",""coordinates"":[{lon:F6},{lat:F6}]}}")
                 sql.Parameters.AddWithValue("@situation", situation)
                 sql.Parameters.AddWithValue("@altitude", altitude)
 
                 sql.ExecuteNonQuery()
-
             Next
         End Using
+
+        AppendText(Form1.TextBox1, $"Done{vbCrLf}")
+
+    End Function
+    Private Function CleanText(s As String, allowed As String) As String
+        s = HttpUtility.HtmlDecode(s)
+        s = Regex.Replace(s, allowed, "")
+        Return s.Trim()
+    End Function
+    Private Function ExtractLatLon(td As HtmlNode) As (Double, Double)
+        ' 1. Get raw HTML (keeps <br>)
+        Dim html = td.InnerHtml
+
+        ' 2. Split at <br> (handles <br>, <br/>, <br />)
+        Dim parts = Regex.Split(html, "<br\s*/?>", RegexOptions.IgnoreCase)
+        If parts.Length < 2 Then Return (0, 0)
+
+        ' 3. Strip HTML tags from each part
+        Dim latStr = Regex.Replace(parts(0), "</?[^>]+>", "").Trim()
+        Dim lonStr = Regex.Replace(parts(1), "</?[^>]+>", "").Trim()
+
+        ' 4. Decode HTML entities
+        latStr = HttpUtility.HtmlDecode(latStr)
+        lonStr = HttpUtility.HtmlDecode(lonStr)
+
+        ' 5. Parse each DMS value
+        Dim lat = ParseOne(latStr)
+        Dim lon = ParseOne(lonStr)
+
+        Return (lat, lon)
+    End Function
+    Private Function ParseOne(s As String) As Double
+        ' Match degrees, minutes (integer or decimal), seconds (integer or decimal), hemisphere
+        Dim m = Regex.Match(s, "(\d+)[°\s]+(\d+(?:\.\d+)?)?['\s]*?(\d+(?:\.\d+)?)?[""]?\s*([NSEW])", RegexOptions.IgnoreCase)
+        If Not m.Success Then Return 0
+
+        Dim deg = Double.Parse(m.Groups(1).Value)
+        Dim min = If(m.Groups(2).Success, Double.Parse(m.Groups(2).Value), 0)
+        Dim sec = If(m.Groups(3).Success, Double.Parse(m.Groups(3).Value), 0)
+        Dim hemi = m.Groups(4).Value.ToUpper()
+
+        ' Convert to decimal degrees
+        Dim value = deg + (min / 60.0) + (sec / 3600.0)
+
+        If hemi = "S" Or hemi = "W" Then value = -value
+
+        Return value
     End Function
 
     Async Function ImportIOTAGroups() As Task
@@ -767,48 +1015,85 @@ Module Import
     End Function
 
     Sub ImportPolyFromKML()
-        ' Import an OSM poly specification from a polygon in a KML file
+
         Dim result As String
+
         With Form1.OpenFileDialog1
             .Filter = "KML files (*.kml)|*.kml|All files(*.*)|*.*"
             .CheckFileExists = True
             .CheckPathExists = True
-            .OkRequiresInteraction = True
             .AddExtension = True
             .DefaultExt = "kml"
-            .AddToRecent = True
             .FileName = ""
             .Title = "Select a .kml file containing the desired polygon"
-            If .ShowDialog() = System.Windows.Forms.DialogResult.OK Then
-                Dim sr = .FileName
-                ' Open KML file as XML
-                Dim doc = XDocument.Load(sr)    ' read the XML
-                Dim ns = doc.Root.Name.Namespace      ' get namespace name so we can qualify everything
-                Dim polygon = doc.Descendants(ns + "coordinates").Value
-                polygon = Regex.Replace(polygon.Trim, "[^0-9\-\., ]", "")        ' find polygon list of coordinates
-                Dim s = Split(polygon, " ")
-                Dim pb As New PolygonBuilder(SpatialReferences.Wgs84)
-                For Each coord In s
-                    Dim c = Split(coord, ",")
-                    Dim X = NormalizeLongitude(c(0))     ' normalize longitude
-                    Dim Y = c(1) Mod 90  
-                    pb.AddPoint(New MapPoint(X, Y))
+
+            If .ShowDialog() = DialogResult.OK Then
+
+                Dim kmlPath = .FileName
+
+                ' ---------------------------------------------------------
+                ' 1. Load KML and extract <coordinates>
+                ' ---------------------------------------------------------
+                Dim doc = XDocument.Load(kmlPath)
+                Dim ns = doc.Root.Name.Namespace
+
+                Dim coordText As String =
+                doc.Descendants(ns + "coordinates").First().Value
+
+                ' Clean up whitespace and illegal characters
+                coordText = Regex.Replace(coordText.Trim(), "[^0-9\-\., ]", "")
+
+                Dim coordPairs = coordText.Split({" "}, StringSplitOptions.RemoveEmptyEntries)
+
+                ' ---------------------------------------------------------
+                ' 2. Build NTS polygon
+                ' ---------------------------------------------------------
+                Dim gf = NtsGeometryServices.Instance.CreateGeometryFactory(4326)
+                Dim coords As New List(Of Coordinate)
+
+                For Each pair In coordPairs
+                    Dim parts = pair.Split(","c)
+                    If parts.Length < 2 Then Continue For
+
+                    Dim lon = NormalizeLongitude(parts(0))
+                    Dim lat = CDbl(parts(1))
+
+                    coords.Add(New Coordinate(lon, lat))
                 Next
-                Dim geom As Polygon = pb.ToGeometry
-                Dim ext = geom.Extent
-                Dim fmt = "f" & DecimalsForBbox(ext.XMin, ext.YMin, ext.XMax, ext.YMax)
-                Dim polypoints As New List(Of String)
-                For Each prt In geom.Parts
-                    For Each pt In prt.Points
-                        polypoints.Add($"{pt.X.ToString(fmt)} {pt.Y.ToString(fmt)}")
-                    Next
+
+                ' Close ring if needed
+                If Not coords.First().Equals2D(coords.Last()) Then
+                    coords.Add(New Coordinate(coords.First().X, coords.First().Y))
+                End If
+
+                Dim ring As LinearRing = gf.CreateLinearRing(coords.ToArray())
+                Dim poly As NetTopologySuite.Geometries.Polygon = gf.CreatePolygon(ring)
+
+                ' ---------------------------------------------------------
+                ' 3. Determine decimal precision for bbox
+                ' ---------------------------------------------------------
+                Dim env = poly.EnvelopeInternal
+                Dim fmt = "f" & DecimalsForBbox(env.MinX, env.MinY, env.MaxX, env.MaxY)
+
+                ' ---------------------------------------------------------
+                ' 4. Build poly:"..." output
+                ' ---------------------------------------------------------
+                Dim outPts As New List(Of String)
+
+                For Each c In ring.Coordinates
+                    outPts.Add($"{c.X.ToString(fmt)} {c.Y.ToString(fmt)}")
                 Next
-                result = $"poly:""{Strings.Join(polypoints.ToArray, " ")}"""
-                Clipboard.SetText(result)           ' copy to clipboard
-                MsgBox(result, vbInformation + vbOK, "Result in clipboard")        ' add closing double quote
+
+                result = $"poly:""{String.Join(" ", outPts)}"""
+
+                Clipboard.SetText(result)
+                MsgBox(result, vbInformation + vbOKOnly, "Result in clipboard")
+
             End If
         End With
+
     End Sub
+
     Public Async Function LandSquareList() As Task
         ' Import a list of squares that are land
         Const LandDataURL = "https://osmdata.openstreetmap.de/download/land-polygons-split-4326.zip"    ' remote source of land data
@@ -893,8 +1178,9 @@ Module Import
             sql.CommandText = "DELETE FROM LAND"
             sql.ExecuteNonQuery()
             For Each feature In land
-                Dim pnt = New MapPoint(CDbl(feature.Attributes("x")), CDbl(feature.Attributes("y")), SpatialReferences.Wgs84)
-                sql.CommandText = $"INSERT OR REPLACE INTO LAND (gridsquare) VALUES ('{GridSquare(pnt)}')"
+                Dim x = CDbl(feature.Attributes("x"))
+                Dim y = CDbl(feature.Attributes("y"))
+                sql.CommandText = $"INSERT OR REPLACE INTO LAND (gridsquare) VALUES ('{GridSquare(x, y)}')"
                 sql.ExecuteNonQuery()
                 UpdateProgressBar(Form1.ProgressBar1, count / featureCount * 100)
                 count += 1
@@ -909,6 +1195,14 @@ Module Import
             AppendText(Form1.TextBox1, $" Grid squares before={Before}, after={After} [{timer.ElapsedMilliseconds / 1000:f1}s]{vbCrLf}")
         End Using
     End Function
+    Private Function DensifyGeometry(geom As NetTopologySuite.Geometries.Geometry, maxDegrees As Double) _
+    As NetTopologySuite.Geometries.Geometry
+
+        Dim densifier = New NetTopologySuite.Densify.Densifier(geom)
+        densifier.DistanceTolerance = maxDegrees
+        Return densifier.GetResultGeometry()
+    End Function
+
     Function NormalizeLongitude(longitude As Double) As Double
         ' Normalize a longitude to between -180 and +180
         Return (longitude Mod 360 + 540) Mod 360 - 180        ' normalize longitude

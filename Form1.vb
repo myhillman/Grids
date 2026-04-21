@@ -23,7 +23,7 @@ Partial Public Class Form1
         AddHandler m.Click, AddressOf ConvertLegacyToolStripMenuItem_Click
         ImportToolStripMenuItem.DropDownItems.Add(m)
     End Sub
-    Private Async Sub UseShapefileToolStripMenuItem1_Click(sender As Object, e As EventArgs) _
+    Public Async Sub UseShapefileToolStripMenuItem1_Click(sender As Object, e As EventArgs) _
         Handles UseShapefileToolStripMenuItem1.Click
         Await UseShapefile()
     End Sub
@@ -178,9 +178,9 @@ Partial Public Class Form1
         Await LandSquareList()
     End Sub
 
-    Private Sub KMLArcGISToolStripMenuItem_Click(sender As Object, e As EventArgs) _
-        Handles KMLArcGISToolStripMenuItem.Click
-        KMLArcgis()
+    Private Sub KMLntsToolStripMenuItem_Click(sender As Object, e As EventArgs) _
+        Handles KMLntsToolStripMenuItem.Click
+        KMLnts()
     End Sub
 
     Private Sub FindIARURegionToolStripMenuItem_Click(sender As Object, e As EventArgs) _

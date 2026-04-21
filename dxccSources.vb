@@ -1,7 +1,10 @@
 ﻿Imports System.Text.RegularExpressions
-Imports Esri.ArcGISRuntime.Geometry
 Imports Microsoft.Data.Sqlite
-
+Imports NetTopologySuite.Simplify
+Imports NetTopologySuite.Geometries
+Imports NetTopologySuite.Operation.Valid
+Imports NetTopologySuite.Operation.Buffer
+Imports NetTopologySuite.Precision
 Module dxccSources
     Public Class DxccSource
         Public Property DXCCnum As Integer
@@ -16,7 +19,7 @@ Module dxccSources
         Dim count As Integer = 0, success As Integer = 0
         Using connect As New SqliteConnection(DXCC_DATA)
             connect.Open()
-            connect.CreateFunction(name:="hashV", function:=Function(values As Object()) HashVariadic(values))
+            EnsureHashVRegistered(connect)
 
             Dim sql = "SELECT DXCCnum, Entity FROM DXCC WHERE (`hash` <> hashV(`rule`,`bbox`,`tolerance_m`,`geometry`) OR geometry is NULL) AND `Deleted`=0 AND `DXCCnum`<>999 ORDER BY `Entity`"
 
@@ -41,31 +44,6 @@ Module dxccSources
         End Using
         Debug.WriteLine($"Done. Processed {count} DXCC entries. Successfully built {success} geometries.")
     End Sub
-    Private Function HashVariadic(values As Object()) As String
-        ' SQLite may pass Nothing or an empty array
-        If values Is Nothing OrElse values.Length = 0 Then
-            Return HashText("")   ' always return a valid hash
-        End If
-
-        Dim parts As New List(Of String)(values.Length)
-
-        For Each v In values
-            If v Is Nothing OrElse v Is DBNull.Value Then
-                parts.Add("")   ' treat NULL as empty string
-            Else
-                ' ToString() can throw on some types → guard it
-                Try
-                    parts.Add(v.ToString())
-                Catch
-                    parts.Add("")   ' fallback
-                End Try
-            End If
-        Next
-
-        Dim combined = String.Join("|", parts)
-        Return HashText(combined)
-    End Function
-
 
     Public Async Function BuildAndSaveDxccGeometry(dxccId As Integer, connect As SqliteConnection) As Task(Of Boolean)
         Try
@@ -124,54 +102,67 @@ Module dxccSources
         'Return SimplifyGeometry(g, tol)
         Return g
     End Function
-    Private Function BuildFromFake(fakeName As String) As Geometry
+
+    Private Function BuildFromFake(fakeName As String,
+                                       gf As GeometryFactory) As Geometry
         ' Some geometries just dont exist anywhere, especially small rocks, reefs and atolls
         ' This makes fake geometry for these
-        Dim p As MapPoint, g As Geometry
+
+        Dim lon As Double
+        Dim lat As Double
+        Dim radius_m As Double
 
         Select Case fakeName
+
             Case "Willis Is"
-                p = New MapPoint(150.2, -16.29, SpatialReferences.Wgs84)    ' center of island
-                g = GeometryEngine.Buffer(p, MetersToDegrees(p, 200))       ' its a small island
+                lon = 150.2 : lat = -16.29
+                radius_m = 200
 
             Case "Mellish Reef"
-                p = New MapPoint(155.8644, -17.4126, SpatialReferences.Wgs84)    ' center of island
-                g = GeometryEngine.Buffer(p, MetersToDegrees(p, 1000))       ' its a small island
+                lon = 155.8644 : lat = -17.4126
+                radius_m = 1000
 
             Case "St Peter & St Paul Rocks"
-                p = New MapPoint(-29.335, 0.9158, SpatialReferences.Wgs84)    ' center of island
-                g = GeometryEngine.Buffer(p, MetersToDegrees(p, 1000))       ' its a small island
+                lon = -29.335 : lat = 0.9158
+                radius_m = 1000
 
             Case "Malpelo Is"
-                p = New MapPoint(-81.5833, 3.9833, SpatialReferences.Wgs84)    ' center of island
-                g = GeometryEngine.Buffer(p, MetersToDegrees(p, 1000))       ' its a small island
+                lon = -81.5833 : lat = 3.9833
+                radius_m = 1000
 
             Case Else
-                Throw New Exception($"FAKE parameter {fakeName} not recognised")
+                Throw New Exception($"FAKE parameter '{fakeName}' not recognised")
         End Select
 
-        Return g
+        ' Convert metres → degrees (approx)
+        Dim deg = radius_m / 110540.0
+
+        ' Build point → buffer → polygon
+        Dim pt As Point = gf.CreatePoint(New Coordinate(lon, lat))
+        Return pt.Buffer(deg)
     End Function
 
-    Public Function MetersToDegrees(g As Geometry, meters As Double) As Double
-        ' Use the latitude of the geometry's center
-        Dim env = g.Extent
-        Dim lat = (env.YMin + env.YMax) / 2.0
-        Dim metersPerDegree = 111320 * Math.Cos(lat * Math.PI / 180)
-        Return meters / metersPerDegree
-    End Function
     Private Sub SaveDxccGeometry(dxccId As Integer, geom As Geometry, conn As SqliteConnection)
         If geom Is Nothing OrElse geom.IsEmpty Then
             Debug.WriteLine($"Geometry for DXCC {dxccId} is empty. Not saved")
             Return      ' don't save empty geometry
         End If
-        Dim GeoJson As String = GeometryToGeoJson(geom)   ' GeoJSON
-        Try
-            conn.CreateFunction(name:="hashV", function:=Function(values As Object()) HashVariadic(values))
-        Catch ex As Exception
-            Debug.WriteLine(ex.Message)
-            ' ignore as probably already registered
-        End Try
+
+        ' Validate and repair geometry before saving
+        If Not geom.IsValid Then
+            ' Preferred: GeometryFixer (NTS 2.x)
+            geom = geom.Buffer(0) ' This is a common quick fix for invalid geometries, but it can be slow and may not fix all issues. If GeometryFixer is available, it would be better to use that instead.
+        End If
+
+        ' Optional: normalize orientation
+        If NetTopologySuite.Algorithm.Orientation.IsCCW(geom.Coordinates) Then
+            geom = geom.Reverse()
+        End If
+
+        ' Save to DB
+        Dim GeoJson As String = FromNTSToGeoJson(geom)   ' GeoJSON
+
+        EnsureHashVRegistered(conn) ' Register hashV ONCE per connection
         ' Update geometry and hash in one statement
         Dim sql = "UPDATE DXCC SET geometry = $g, hash = hashV(rule, bbox, tolerance_m, $g) WHERE DXCCnum = $id"
 
@@ -181,112 +172,155 @@ Module dxccSources
             cmd.ExecuteNonQuery()
         End Using
     End Sub
+
     Public Async Function BuildDXCCGeometryAsync(src As DxccSource) As Task(Of Geometry)
 
-        ' STEP 1 — Resolve base geometry
+        ' ---------------------------------------------------------
+        ' STEP 1 — Resolve base geometry (already NTS)
+        ' ---------------------------------------------------------
         Dim baseGeom As Geometry = Await ResolveRuleExpressionAsync(src)
-        ' STEP 2 — Aggressive pre-simplification (critical)
-        Dim preTol = 0.00002 ' ~2m
-        baseGeom = GeometryEngine.Generalize(baseGeom, preTol, True)
-        Debug.WriteLine("BASE JSON:")
-        Debug.WriteLine(baseGeom.ToJson())
-        If baseGeom Is Nothing Then
+
+        If baseGeom Is Nothing OrElse baseGeom.IsEmpty Then
             Debug.WriteLine($"Failed to resolve base geometry for DXCC '{src.name}' using rule: {src.rule}")
             Return Nothing
         End If
-        baseGeom = GeometryEngine.Simplify(baseGeom)
 
-        ' STEP 2 — Apply bbox/poly if present
+        ' ---------------------------------------------------------
+        ' STEP 2 — Pre-simplify (optional but useful)
+        ' ---------------------------------------------------------
+        Dim preTol = 0.00002 ' ~2m
+        baseGeom = TopologyPreservingSimplifier.Simplify(baseGeom, preTol)
+
+        ' ---------------------------------------------------------
+        ' STEP 3 — Apply bbox/poly clip
+        ' ---------------------------------------------------------
         If Not String.IsNullOrWhiteSpace(src.bbox) Then
 
             Dim clipGeom As Geometry = ParseBBoxOrPoly(src.bbox)
-            If clipGeom Is Nothing Then Return Nothing
+            If clipGeom Is Nothing OrElse clipGeom.IsEmpty Then Return Nothing
 
-            ' Normalize clipper BEFORE clipping
-            clipGeom = GeometryEngine.Simplify(clipGeom)
+            ' Topology fix on clipper
+            clipGeom = clipGeom.Buffer(0)
 
-            ' Clip
-            baseGeom = GeometryEngine.Intersection(baseGeom, clipGeom)
+            ' Clip using NTS intersection
+            baseGeom = baseGeom.Intersection(clipGeom)
 
-            ' CLEANUP STEP — critical for political boundaries
-            baseGeom = GeometryEngine.Buffer(baseGeom, 0)
-
-            Debug.WriteLine("CLIPPED JSON:")
-            Debug.WriteLine(baseGeom.ToJson())
+            ' Cleanup — buffer(0) fixes slivers, self-intersections, etc.
+            baseGeom = baseGeom.Buffer(0)
         End If
 
         If baseGeom Is Nothing OrElse baseGeom.IsEmpty Then Return Nothing
 
-        ' STEP 3 — Generalize AFTER clipping
+        ' ---------------------------------------------------------
+        ' STEP 4 — Generalize AFTER clipping
+        ' ---------------------------------------------------------
         If src.tolerance_m > 0 Then
-            Dim degTol = src.tolerance_m / 110540
-            baseGeom = GeometryEngine.Generalize(baseGeom, degTol, True)
+            Dim degTol = src.tolerance_m / 110540.0
+            baseGeom = TopologyPreservingSimplifier.Simplify(baseGeom, degTol)
         End If
 
-        ' STEP 4 — Round AFTER generalization
+        ' ---------------------------------------------------------
+        ' STEP 5 — Round coordinates
+        ' ---------------------------------------------------------
         baseGeom = RoundGeometry(baseGeom, 6)
 
         Return baseGeom
     End Function
 
-
-
-    Public Function SimplifyGeometry(geom As Geometry, tolerance As Double) As Geometry
-        ' Null or trivial geometry → return as-is
-        If geom Is Nothing Then Return Nothing
-        If TypeOf geom Is MapPoint Then Return geom
-        If TypeOf geom Is Polyline AndAlso DirectCast(geom, Polyline).Parts.Count = 0 Then Return geom
-        If TypeOf geom Is Polygon AndAlso DirectCast(geom, Polygon).Parts.Count = 0 Then Return geom
-
-        ' ArcGIS Runtime 200.x Simplify() is too aggressive — do NOT use it
-        ' Instead use Generalize() with preserveTopology:=True
-        Dim simplified As Geometry = GeometryEngine.Generalize(geom, tolerance, True)
-
-        ' Generalize can introduce floating-point drift → round coordinates
-        simplified = RoundGeometry(simplified, 6)
-
-        Return simplified
-    End Function
     Public Function RoundGeometry(geom As Geometry, decimals As Integer) As Geometry
         If geom Is Nothing Then Return Nothing
 
-        If TypeOf geom Is MapPoint Then
-            Dim p = DirectCast(geom, MapPoint)
-            Return New MapPoint(Math.Round(p.X, decimals), Math.Round(p.Y, decimals))
-        End If
+        Dim gf As GeometryFactory = geom.Factory
 
-        If TypeOf geom Is Polygon Then
-            Dim poly = DirectCast(geom, Polygon)
-            Dim builder As New PolygonBuilder(poly.SpatialReference)
+        Select Case True
 
-            For Each part In poly.Parts
-                Dim newPart As New List(Of MapPoint)
-                For Each p In part.Points
-                    newPart.Add(New MapPoint(Math.Round(p.X, decimals), Math.Round(p.Y, decimals)))
+        ' -------------------------
+        ' POINT
+        ' -------------------------
+            Case TypeOf geom Is Point
+                Dim p = DirectCast(geom, Point)
+                Dim c = p.Coordinate
+                Dim rc As New Coordinate(Math.Round(c.X, decimals),
+                                     Math.Round(c.Y, decimals))
+                Return gf.CreatePoint(rc)
+
+        ' -------------------------
+        ' LINESTRING
+        ' -------------------------
+            Case TypeOf geom Is LineString
+                Dim ls = DirectCast(geom, LineString)
+                Dim coords = ls.Coordinates.Select(
+                Function(c) New Coordinate(Math.Round(c.X, decimals),
+                                           Math.Round(c.Y, decimals))
+            ).ToArray()
+                Return gf.CreateLineString(coords)
+
+        ' -------------------------
+        ' POLYGON
+        ' -------------------------
+            Case TypeOf geom Is Polygon
+                Dim poly = DirectCast(geom, Polygon)
+
+                ' Shell
+                Dim shellCoords = poly.Shell.Coordinates.Select(
+                Function(c) New Coordinate(Math.Round(c.X, decimals),
+                                           Math.Round(c.Y, decimals))
+            ).ToArray()
+                Dim shell = gf.CreateLinearRing(shellCoords)
+
+                ' Holes
+                Dim holes(poly.NumInteriorRings - 1) As LinearRing
+                For i = 0 To poly.NumInteriorRings - 1
+                    Dim holeCoords = poly.GetInteriorRingN(i).Coordinates.Select(
+                    Function(c) New Coordinate(Math.Round(c.X, decimals),
+                                               Math.Round(c.Y, decimals))
+                ).ToArray()
+                    holes(i) = gf.CreateLinearRing(holeCoords)
                 Next
-                builder.AddPart(newPart)
-            Next
 
-            Return builder.ToGeometry()
-        End If
+                Return gf.CreatePolygon(shell, holes)
 
-        If TypeOf geom Is Polyline Then
-            Dim line = DirectCast(geom, Polyline)
-            Dim builder As New PolylineBuilder(line.SpatialReference)
-
-            For Each part In line.Parts
-                Dim newPart As New List(Of MapPoint)
-                For Each p In part.Points
-                    newPart.Add(New MapPoint(Math.Round(p.X, decimals), Math.Round(p.Y, decimals)))
+        ' -------------------------
+        ' MULTILINESTRING
+        ' -------------------------
+            Case TypeOf geom Is MultiLineString
+                Dim mls = DirectCast(geom, MultiLineString)
+                Dim lines As New List(Of LineString)
+                For i = 0 To mls.NumGeometries - 1
+                    lines.Add(DirectCast(RoundGeometry(mls.GetGeometryN(i), decimals), LineString))
                 Next
-                builder.AddPart(newPart)
-            Next
+                Return gf.CreateMultiLineString(lines.ToArray())
 
-            Return builder.ToGeometry()
-        End If
+        ' -------------------------
+        ' MULTIPOLYGON
+        ' -------------------------
+            Case TypeOf geom Is MultiPolygon
+                Dim mp = DirectCast(geom, MultiPolygon)
+                Dim polys As New List(Of Polygon)
+                For i = 0 To mp.NumGeometries - 1
+                    polys.Add(DirectCast(RoundGeometry(mp.GetGeometryN(i), decimals), Polygon))
+                Next
+                Return gf.CreateMultiPolygon(polys.ToArray())
 
-        Return geom
+        ' -------------------------
+        ' GEOMETRYCOLLECTION
+        ' -------------------------
+            Case TypeOf geom Is GeometryCollection
+                Dim gc = DirectCast(geom, GeometryCollection)
+                Dim geoms As New List(Of Geometry)
+                For i = 0 To gc.NumGeometries - 1
+                    geoms.Add(RoundGeometry(gc.GetGeometryN(i), decimals))
+                Next
+                Return gf.CreateGeometryCollection(geoms.ToArray())
+
+                ' -------------------------
+                ' FALLBACK
+                ' -------------------------
+            Case Else
+                Return geom
+        End Select
     End Function
+
 
 
     ' ---------------------------------------------------------
@@ -294,7 +328,7 @@ Module dxccSources
     ' ---------------------------------------------------------
     Private Async Function ResolveRuleExpressionAsync(src As DxccSource) As Task(Of Geometry)
 
-        Dim parts = Tokenize(src.rule)
+        Dim parts As List(Of RuleToken) = Tokenize(src.rule)
 
         If parts.Count = 0 Then
             Return Nothing
@@ -303,47 +337,108 @@ Module dxccSources
         Dim current As Geometry = Nothing
 
         For Each part In parts
-            Dim geom = Await ResolveSingleSourceAsync(src.source, part.Token)
+
+            Dim geom As Geometry = Await ResolveSingleSourceAsync(src.source, part.Token)
+            If src.name = "Agalega & St Brandon" Then
+                Debug.WriteLine($"Resolved geometry for {src.name} part: {geom.NumGeometries} parts")
+            End If
+
+            geom = RepairGeometry(geom)     ' repair the geometry
+
             If geom Is Nothing Then Continue For
 
             If current Is Nothing Then
-                ' First geometry always initializes the accumulator
+                ' First geometry initializes accumulator
                 current = geom
+
             Else
-                If part.Op = "+"c Then
-                    current = GeometryEngine.Union(current, geom)
-                ElseIf part.Op = "-"c Then
-                    current = GeometryEngine.Difference(current, geom)
-                End If
+                Select Case part.Op
+
+                    Case "+"c
+                        current =
+                            NetTopologySuite.Operation.Union.UnaryUnionOp.Union(
+                                New Geometry() {current, geom}
+                                )
+
+                    Case "-"c
+                        current =
+                            current.Difference(geom)
+
+                End Select
             End If
         Next
 
         Return current
     End Function
 
-    Private Function Tokenize(expr As String) As List(Of (Op As Char, Token As String))
-        Dim result As New List(Of (Char, String))
-        Dim current As String = ""
-        Dim currentOp As Char = "+"c   ' default for first token
+    Public Function RepairGeometry(g As Geometry) As Geometry
+        If g Is Nothing OrElse g.IsEmpty Then Return g
 
-        For Each ch In expr
+        ' DO NOT use Buffer(0) on raw NE multipolygons
+        ' First, ensure rings are closed and coordinates are valid
+        g = g.Copy()
+
+        ' Fix duplicate points
+        g = NetTopologySuite.Precision.GeometryPrecisionReducer.Reduce(g,
+                                                                       New PrecisionModel(1000000000.0))
+
+        ' Now try buffer(0) ONLY on each polygon separately
+        If TypeOf g Is MultiPolygon Then
+            Dim polys As New List(Of Geometry)
+            For i = 0 To g.NumGeometries - 1
+                Dim p = g.GetGeometryN(i)
+                If Not p.IsValid Then p = p.Buffer(0)
+                polys.Add(p)
+            Next
+            Return g.Factory.CreateMultiPolygon(polys.Cast(Of Polygon).ToArray())
+        End If
+
+        ' Single polygon case
+        If Not g.IsValid Then g = g.Buffer(0)
+
+        Return g
+    End Function
+
+
+    Private Function Tokenize(rule As String) As List(Of RuleToken)
+
+        Dim tokens As New List(Of RuleToken)
+
+        If String.IsNullOrWhiteSpace(rule) Then
+            Return tokens
+        End If
+
+        Dim parts = rule.Split({"+"c, "-"c}, StringSplitOptions.RemoveEmptyEntries)
+        Dim ops = New List(Of Char)
+
+        ' Extract operators in order
+        For Each ch In rule
             If ch = "+"c OrElse ch = "-"c Then
-                If current.Trim().Length > 0 Then
-                    result.Add((currentOp, current.Trim()))
-                End If
-                current = ""
-                currentOp = ch
-            Else
-                current &= ch
+                ops.Add(ch)
             End If
         Next
 
-        If current.Trim().Length > 0 Then
-            result.Add((currentOp, current.Trim()))
+        ' First token defaults to '+'
+        If ops.Count < parts.Length Then
+            ops.Insert(0, "+"c)
         End If
 
-        Return result
+        ' Build RuleToken objects
+        For i = 0 To parts.Length - 1
+            tokens.Add(New RuleToken With {
+                          .Op = ops(i),
+                          .Token = parts(i).Trim()
+                          })
+        Next
+
+        Return tokens
     End Function
+
+    Public Class RuleToken
+        Public Property Op As Char
+        Public Property Token As String
+    End Class
+
 
     ' ---------------------------------------------------------
     '  SINGLE SOURCE RESOLVER (ASYNC)
@@ -360,7 +455,7 @@ Module dxccSources
                 Return Await BuildFromOSM(token)
 
             Case "FAKE"
-                Return BuildFromFake(token)
+                Return BuildFromFake(token, factory)
 
             Case Else
                 Throw New Exception($"Unsupported resolver type '{source}' for token '{token}'.")

@@ -1,17 +1,15 @@
 ﻿Imports System.IO
-Imports System.Text.Json
-Imports System.Text.RegularExpressions
-Imports System.Windows.Forms.VisualStyles.VisualStyleElement
-Imports Clipper2Lib
-Imports DotNetDBF
 Imports Esri.ArcGISRuntime
 Imports Esri.ArcGISRuntime.Data
 Imports Esri.ArcGISRuntime.Geometry
 Imports Esri.ArcGISRuntime.Ogc
 Imports NetTopologySuite
+Imports NetTopologySuite.Geometries
 Imports NetTopologySuite.IO
-Imports NetTopologySuite.Operation.Union
-Imports OsmSharp.IO.PBF
+Imports NetTopologySuite.Operation.Polygonize
+Imports NetTopologySuite.Simplify
+'Imports NetTopologySuite.IO.Shapefile
+Imports Microsoft.Data.Sqlite
 
 Module Form1side
     Public Const GridFieldX = 20, GridFieldY = 10    ' size of gridfield in degrees in X,Y
@@ -92,215 +90,227 @@ There are some additional folders which are closed by default. You must open the
         Application.DoEvents()
     End Sub
 
-    Public Function GridSquare(p As MapPoint) As String
-        ' Convert a mappoint to a gridsquare
-        ' https://ham.stackexchange.com/questions/221/how-can-one-convert-from-lat-long-to-grid-square
-        Const upper = "ABCDEFGHIJKLMNOPQR"
-        Const numbers = "0123456789"
-        Dim lon As Double = p.X + 180, lat As Double = p.Y + 90
-        Dim lat_sq = upper(Math.Floor(lat / GridFieldY))
-        Dim lon_sq = upper(Math.Floor(lon / GridFieldX))
-        Dim lat_field = numbers(Math.Floor(lat Mod 10))
-        Dim lon_field = numbers(Math.Floor((lon / 2) Mod 10))
-        Return $"{lon_sq}{lat_sq}{lon_field}{lat_field}"
-    End Function
     Public Async Function UseShapefile() As Task(Of Boolean)
 
-        Dim Features = Await ShapefileFeatureTable.OpenAsync("D:\GIS Data\World countries generalized\World_Countries_Generalized.shp")
-        Dim Range As String, prefix As String
-        Dim csvfields As New List(Of String), square_list As New List(Of Integer), field As String, name As String
-        Dim sql As SqliteCommand, SQLdr As SqliteDataReader, locators As New List(Of String)
-        Dim sql1 As SqliteCommand, SQLdr1 As SqliteDataReader
-        Dim PrefixesFound As New List(Of String)
-        Dim DXCC As Integer, ProductionGrids As New List(Of String), squares As New List(Of String)
-        ' List mapping world administrative area names to DXCC names
-        Dim NameChanges As New Dictionary(Of String, String) From {
-            {"Palestinian Territory", "Palestine"},
-            {"Vatican City", "Vatican"},
-            {"Antigua and Barbuda", "Antigua & Barbuda"},
-            {"Azores Islands", "Azores"},
-            {"Bosnia and Herzegovina", "Bosnia-Herzegovina"},
-            {"Bouvet Island", "Bouvet"},
-            {"British Virgin Islands", "British Virgin Is"},
-            {"Brunei Darussalam", "Brunei"},
-            {"Burkina Faso", "Burkina-Faso"},
-            {"Cabo Verde", "Cape Verde"},
-            {"Canarias", "Canary Is"},
-            {"Cayman Islands", "Cayman Is"},
-            {"Christmas Island", "Christmas Is"},
-            {"Cocos Islands", "Cocos Is"},
-            {"Cocos (Keeling) Islands", "Cocos-Keeling Is"},
-            {"Congo", "Republic of the Congo"},
-            {"Côte d'Ivoire", "Cote d'Ivoire"},
-            {"Congo DRC", "Dem. Republic of the Congo"},
-            {"Falkland Islands", "Falkland Is"},
-            {"Faroe Islands", "Faroe Is"},
-            {"Gambia", "The Gambia"},
-            {"Glorioso Islands", "Glorioso Is"},
-            {"Guantanamo", "Guantanamo Bay"},
-            {"Heard Island and McDonald Islands", "Heard Is"},
-            {"Iran (Islamic Republic of)", "Iran"},
-            {"Juan De Nova Island", "Juan de Nova"},
-            {"Madeira", "Madeira Is"},
-            {"Marshall Islands", "Marshall Is"},
-            {"Mauritius", "Mauritius Is"},
-            {"Micronesia (Federated States of)", "Micronesia"},
-            {"Midway Is.", "Midway Is"},
-            {"Moldova, Republic of", "Moldova"},
-            {"Netherlands Antilles", "Bonaire, Curacao"},
-            {"North Korea", "Democratic People's Republic of Korea"},
-            {"Northern Mariana Islands", "Mariana Is"},
-            {"Norfolk Island", "Norfolk Is"},
-            {"Pitcairn", "Pitcairn Is"},
-            {"Réunion", "Reunion"},
-            {"Saba", "Saba & St. Eustatius"},
-            {"Saint Barthelemy", "St. Barthelemy"},
-            {"Saint Eustatius", "St. Eustatius"},
-            {"Saint Helena", "St Helena Is"},
-            {"Saint Kitts and Nevis", "St Kitts & Nevis"},
-            {"Saint Lucia", "St Lucia"},
-            {"Saint Pierre and Miquelon", "St. Pierre & Miquelon"},
-            {"Saint Vincent and the Grenadines", "St Vincent"},
-            {"Sao Tome and Principe", "Sao Tome & Principe"},
-            {"Slovakia", "Slovak Republic"},
-            {"Solomon Islands", "Solomon Is"},
-            {"South Africa", "Republic of South Africa"},
-            {"South Korea", "Republic of Korea"},
-            {"Svalbard", "Svalbard Is"},
-            {"Turkiye", "Turkey"},
-            {"Eswatini", "Kingdom of eSwatini"},
-            {"Syrian Arab Republic", "Syria"},
-            {"Tokelau", "Tokelau Is"},
-            {"Trinidad and Tobago", "Trinidad & Tobago"},
-            {"Turks and Caicos Islands", "Turks & Caicos Is"},
-            {"United Republic of Tanzania", "Tanzania"},
-            {"US Virgin Islands", "US Virgin Is"},
-            {"United States of America", "United States"},
-            {"Wallis and Futuna", "Wallis & Futuna"}
-            }
+        Dim gf = NtsGeometryServices.Instance.CreateGeometryFactory(4326)
+        Dim shpPath = "D:\GIS Data\World countries generalized\World_Countries_Generalized.shp"
 
-        PrefixesFound.Clear()
-        Dim myQueryFilter As New QueryParameters
-        With myQueryFilter
-            .OutSpatialReference = SpatialReferences.Wgs84     ' results in WGS84
-            .ReturnGeometry = True
-        End With
-        myQueryFilter.OrderByFields.Add(New OrderBy("country", SortOrder.Ascending))         ' sort the results by name
-        Dim Countries = Await Features.QueryFeaturesAsync(myQueryFilter).ConfigureAwait(False)           ' run query
+        ' Load shapefile
+        Dim countries As New List(Of (Name As String, Geom As NetTopologySuite.Geometries.Geometry))
+
+        Using reader As New ShapefileDataReader(shpPath, gf)
+            Dim fieldIndex = reader.GetOrdinal("country")
+            While reader.Read()
+                Dim geom As NetTopologySuite.Geometries.Geometry = reader.Geometry
+                Dim name As String = reader.GetString(fieldIndex)
+                countries.Add((name, geom))   ' or (name, geom) with your tuple/class
+            End While
+        End Using
+
+        ' Name normalization table
+        Dim NameChanges As New Dictionary(Of String, String) From {
+        {"Palestinian Territory", "Palestine"},
+        {"Vatican City", "Vatican"},
+        {"Antigua and Barbuda", "Antigua & Barbuda"},
+        {"Azores Islands", "Azores"},
+        {"Bosnia and Herzegovina", "Bosnia-Herzegovina"},
+        {"Bouvet Island", "Bouvet"},
+        {"British Virgin Islands", "British Virgin Is"},
+        {"Brunei Darussalam", "Brunei"},
+        {"Burkina Faso", "Burkina-Faso"},
+        {"Cabo Verde", "Cape Verde"},
+        {"Canarias", "Canary Is"},
+        {"Cayman Islands", "Cayman Is"},
+        {"Christmas Island", "Christmas Is"},
+        {"Cocos Islands", "Cocos Is"},
+        {"Cocos (Keeling) Islands", "Cocos-Keeling Is"},
+        {"Congo", "Republic of the Congo"},
+        {"Côte d'Ivoire", "Cote d'Ivoire"},
+        {"Congo DRC", "Dem. Republic of the Congo"},
+        {"Falkland Islands", "Falkland Is"},
+        {"Faroe Islands", "Faroe Is"},
+        {"Gambia", "The Gambia"},
+        {"Glorioso Islands", "Glorioso Is"},
+        {"Guantanamo", "Guantanamo Bay"},
+        {"Heard Island and McDonald Islands", "Heard Is"},
+        {"Iran (Islamic Republic of)", "Iran"},
+        {"Juan De Nova Island", "Juan de Nova"},
+        {"Madeira", "Madeira Is"},
+        {"Marshall Islands", "Marshall Is"},
+        {"Mauritius", "Mauritius Is"},
+        {"Micronesia (Federated States of)", "Micronesia"},
+        {"Midway Is.", "Midway Is"},
+        {"Moldova, Republic of", "Moldova"},
+        {"Netherlands Antilles", "Bonaire, Curacao"},
+        {"North Korea", "Democratic People's Republic of Korea"},
+        {"Northern Mariana Islands", "Mariana Is"},
+        {"Norfolk Island", "Norfolk Is"},
+        {"Pitcairn", "Pitcairn Is"},
+        {"Réunion", "Reunion"},
+        {"Saba", "Saba & St. Eustatius"},
+        {"Saint Barthelemy", "St. Barthelemy"},
+        {"Saint Eustatius", "St. Eustatius"},
+        {"Saint Helena", "St Helena Is"},
+        {"Saint Kitts and Nevis", "St Kitts & Nevis"},
+        {"Saint Lucia", "St Lucia"},
+        {"Saint Pierre and Miquelon", "St. Pierre & Miquelon"},
+        {"Saint Vincent and the Grenadines", "St Vincent"},
+        {"Sao Tome and Principe", "Sao Tome & Principe"},
+        {"Slovakia", "Slovak Republic"},
+        {"Solomon Islands", "Solomon Is"},
+        {"South Africa", "Republic of South Africa"},
+        {"South Korea", "Republic of Korea"},
+        {"Svalbard", "Svalbard Is"},
+        {"Turkiye", "Turkey"},
+        {"Eswatini", "Kingdom of eSwatini"},
+        {"Syrian Arab Republic", "Syria"},
+        {"Tokelau", "Tokelau Is"},
+        {"Trinidad and Tobago", "Trinidad & Tobago"},
+        {"Turks and Caicos Islands", "Turks & Caicos Is"},
+        {"United Republic of Tanzania", "Tanzania"},
+        {"US Virgin Islands", "US Virgin Is"},
+        {"United States of America", "United States"},
+        {"Wallis and Futuna", "Wallis & Futuna"}
+    }
+
+        Dim PrefixesFound As New List(Of String)
 
         Using connect As New SqliteConnection(DXCC_DATA),
-            gridlist As New StreamWriter($"{Application.StartupPath}\GridList.txt", False),
-             missing As New StreamWriter($"{Application.StartupPath}\missing.txt", False)
-            connect.Open()  ' open database
-            sql = connect.CreateCommand
-            sql1 = connect.CreateCommand
-            For Each country In Countries
-                name = country.Attributes("country")
-                Dim value As String = Nothing
-                If NameChanges.TryGetValue(name, value) Then name = value
-                ' Find the prefix
+          gridlist As New StreamWriter($"{Application.StartupPath}\GridList.txt", False),
+          missing As New StreamWriter($"{Application.StartupPath}\missing.txt", False)
+
+            connect.Open()
+
+            Dim sql = connect.CreateCommand()
+            Dim sql1 = connect.CreateCommand()
+
+            For Each c In countries
+
+                Dim name = c.Name
+                Dim geom = c.Geom
+
+                ' Normalize name
+                Dim newName As String = Nothing
+                If NameChanges.TryGetValue(name, newName) Then name = newName
+
+                ' Lookup DXCC entry
                 sql.CommandText = $"SELECT * FROM DXCC WHERE Entity='{name.Replace("'", "''")}' AND Deleted=0"
-                SQLdr = sql.ExecuteReader
-                If SQLdr.HasRows Then
-                    SQLdr.Read()
-                    prefix = SQLdr("prefix")
-                    PrefixesFound.Add($"'{prefix}'")      ' remember prefixes found
-                    ProductionGrids.Clear()
-                    ' Make a list of grids in production system
-                    DXCC = SQLdr("DXCCnum")
+                Dim SQLdr = sql.ExecuteReader()
+
+                If SQLdr.Read() Then
+
+                    Dim prefix = CStr(SQLdr("prefix"))
+                    PrefixesFound.Add($"'{prefix}'")
+
+                    Dim DXCC = CInt(SQLdr("DXCCnum"))
+
+                    ' Load production grids
+                    Dim ProductionGrids As New List(Of String)
                     sql1.CommandText = $"SELECT * FROM DXCCtoGRID WHERE DXCC={DXCC} ORDER BY GRID"
-                    SQLdr1 = sql1.ExecuteReader
-                    While SQLdr1.Read
-                        ProductionGrids.Add(SQLdr1("GRID"))
+                    Dim SQLdr1 = sql1.ExecuteReader()
+                    While SQLdr1.Read()
+                        ProductionGrids.Add(CStr(SQLdr1("GRID")))
                     End While
                     SQLdr1.Close()
-                    ' produce gridsquare list
-                    Dim env = country.Geometry.Extent         '   find extents of country
-                    ' Find top left and bottom right corner of square
-                    Dim TopLeft = New MapPoint(Int(env.XMin / GridSquareX) * GridSquareX, Int(env.YMin / GridSquareY) * GridSquareY, SpatialReferences.Wgs84)
-                    Dim BottomRight = New MapPoint(Int((env.XMax + GridSquareX) / GridSquareX) * GridSquareX, Int((env.YMax + GridSquareY) / GridSquareY) * GridSquareY, SpatialReferences.Wgs84)
-                    ' test each gridsquare in the extent to see if it intersects with country
-                    Dim x As Integer, y As Integer
-                    squares.Clear()
-                    x = TopLeft.X
-                    While x < BottomRight.X
-                        y = TopLeft.Y
-                        While y < BottomRight.Y
-                            Dim square = New Envelope(x, y, x + GridSquareX, y + GridSquareY, SpatialReferences.Wgs84)   ' the square we are testing
-                            Dim SquareBuffered = square.BufferGeodetic(-1000, LinearUnits.Meters)        ' reduce the square by 100 on all sides
-                            If SquareBuffered.Intersects(country.Geometry) Then
-                                squares.Add(GridSquare(New MapPoint(x, y, SpatialReferences.Wgs84)))    ' add to list of gridsquares
+
+                    ' Compute grid squares
+                    Dim squares As New List(Of String)
+
+                    Dim env As NetTopologySuite.Geometries.Envelope = geom.EnvelopeInternal
+
+                    Dim topLeftX = Math.Floor(env.MinX / GridSquareX) * GridSquareX
+                    Dim topLeftY = Math.Floor(env.MinY / GridSquareY) * GridSquareY
+                    Dim bottomRightX = Math.Ceiling(env.MaxX / GridSquareX) * GridSquareX
+                    Dim bottomRightY = Math.Ceiling(env.MaxY / GridSquareY) * GridSquareY
+
+                    Dim x = topLeftX
+                    While x < bottomRightX
+                        Dim y = topLeftY
+                        While y < bottomRightY
+
+                            Dim sqEnv As New NetTopologySuite.Geometries.Envelope(x, x + GridSquareX, y, y + GridSquareY)
+                            Dim sqPoly = gf.ToGeometry(sqEnv)
+
+                            If sqPoly.Intersects(geom) Then
+                                squares.Add(GridSquare(x, y))
                             End If
+
                             y += GridSquareY
                         End While
                         x += GridSquareX
                     End While
+
                     squares.Sort()
 
+                    ' Write gridlist entry
                     If squares.Count = 0 Then
                         gridlist.WriteLine($"// Found no grids for {name}")
                     Else
-                        ' export grids
-                        csvfields.Clear()
-                        If name.Contains(" "c) Then name = $"""{name}"""     ' escape spaces
-                        csvfields.Add(name)  ' name
-                        csvfields.Add(prefix)     ' prefix
-                        square_list.Clear()
-                        Dim previous_field = squares(0).Substring(0, 2)      ' start with first field
-                        Dim sqr = Int(squares(0).Substring(2, 2))   ' the first square
-                        square_list.Add(sqr)
-                        locators.Clear()
+                        Dim csvfields As New List(Of String)
+                        If name.Contains(" "c) Then name = $"""{name}"""
+                        csvfields.Add(name)
+                        csvfields.Add(prefix)
+
+                        Dim locators As New List(Of String)
+                        Dim square_list As New List(Of Integer)
+
+                        Dim prevField = squares(0).Substring(0, 2)
+                        square_list.Add(CInt(squares(0).Substring(2, 2)))
 
                         For i = 1 To squares.Count - 1
-                            field = squares(i).Substring(0, 2)      ' the field
-                            sqr = Int(squares(i).Substring(2, 2))   ' the square
-                            If field <> previous_field Then
-                                ' beginning of New field
-                                ' Change of field - output current one
-                                Range = RangeString(square_list) ' convert To shorter range format
-                                locators.Add($"{previous_field} {Range}")
+                            Dim field = squares(i).Substring(0, 2)
+                            Dim sqr = CInt(squares(i).Substring(2, 2))
+
+                            If field <> prevField Then
+                                locators.Add($"{prevField} {RangeString(square_list)}")
                                 square_list.Clear()
                             End If
-                            previous_field = field
-                            square_list.Add(sqr)       ' add square to list
+
+                            prevField = field
+                            square_list.Add(sqr)
                         Next
-                        ' Last entry
-                        Range = RangeString(square_list) ' convert to shorter range format
-                        locators.Add($"{previous_field} {Range}")
+
+                        locators.Add($"{prevField} {RangeString(square_list)}")
                         csvfields.Add($"""{String.Join(", ", locators)}""")
-                        Dim txt = String.Join(", ", csvfields)
-                        gridlist.WriteLine(txt)
+
+                        gridlist.WriteLine(String.Join(", ", csvfields))
                     End If
-                    ' display differences between two grid lists
+
+                    ' Compare production vs world
                     If squares.Count > 0 Then
-                        Dim Production = ProductionGrids.Except(squares)    ' squares that are in production, but not world
-                        Dim World = squares.Except(ProductionGrids)         ' squares that are in world, but not production
+                        Dim Production = ProductionGrids.Except(squares)
+                        Dim World = squares.Except(ProductionGrids)
+
                         missing.WriteLine(name)
-                        If Not Production.Except(World).Any And Not World.Except(Production).Any Then
+                        If Not Production.Any() AndAlso Not World.Any() Then
                             missing.WriteLine("Lists match")
                         Else
                             missing.WriteLine($" Missing from production {String.Join(",", World)}")
                             missing.WriteLine($" Missing from world {String.Join(",", Production)}")
                         End If
                     End If
-                Else
-                    prefix = "???"      ' failed to lookup prefix
+
                 End If
+
                 SQLdr.Close()
                 AppendText(Form1.TextBox1, $"{name}{vbCrLf}")
             Next
-            ' Display prefixes not found
+
+            ' Show DXCC not found
             Dim count = 0
-            sql.CommandText = $"SELECT * FROM DXCC WHERE prefix NOT IN ({String.Join(",", PrefixesFound)}) AND Deleted=0 ORDER By Entity"
-            SQLdr = sql.ExecuteReader
-            While SQLdr.Read
-                gridlist.WriteLine($"// Not found {SQLdr("Entity")} {SQLdr("prefix")}")
+            sql.CommandText = $"SELECT * FROM DXCC WHERE prefix NOT IN ({String.Join(",", PrefixesFound)}) AND Deleted=0 ORDER BY Entity"
+            Dim SQLdr2 = sql.ExecuteReader()
+            While SQLdr2.Read()
+                gridlist.WriteLine($"// Not found {SQLdr2("Entity")} {SQLdr2("prefix")}")
                 count += 1
             End While
             gridlist.WriteLine($"// Total of {count} DXCC entities not found, {PrefixesFound.Count} found")
+
         End Using
+
         Return True
     End Function
+
     Public Async Function UseOSM() As Task(Of Boolean)
         ' Retrieve country boundaries from OpenStreetMap (OSM)
         Dim sql As SqliteCommand, SQLdr As SqliteDataReader
@@ -352,10 +362,9 @@ There are some additional folders which are closed by default. You must open the
             Dim geom = Await EvaluateExpressionAsync(relation, cache)     ' get geometry for the country using the specified query parameters
             Debug.WriteLine("Cache hits: " & cache.CacheHits)
             Debug.WriteLine("Cache misses: " & cache.CacheMisses)
-            Dim esriGeom = NtsToEsri(geom)     ' convert to esri
 
             ' Convert to GeoJSON
-            Dim GeoJson As String = GeometryToGeoJson(esriGeom)
+            Dim GeoJson As String = fromntsToGeoJson(geom)
 
             ' 4. Update database
             Dim hash = HashText($"{rule}|{bbox}|{tolerance_m}")   ' calculate hash of the parameters used to create the geometry, so we can detect if they change in future
@@ -445,7 +454,7 @@ There are some additional folders which are closed by default. You must open the
                     .SetAttributeValue("lat", CDbl(SQLdr("lat")))
                     .SetAttributeValue("lon", CDbl(SQLdr("lon")))
                     .SetAttributeValue("StartDate", CDate(SQLdr("StartDate")))
-                    .Geometry = GeoJsonToGeometry(SQLdr("geometry"))
+                    .Geometry = fromGeoJsonToArcGis(SQLdr("geometry"))
                 End With
                 Await sft.AddFeatureAsync(feature)
             End While
@@ -453,6 +462,8 @@ There are some additional folders which are closed by default. You must open the
         sft.Close()
         AppendText(Form1.TextBox1, $"Shapefile file created with {Removed} countries removed and {countries} added{vbCrLf}")
     End Sub
+
+
     Public Sub RemoveEmptyGeometry()
         ' Remove any geometry that is empty. This can be the result of an overagressive Generalize operation
         Dim sql As SqliteCommand, SQLdr As SqliteDataReader, sqlR As SqliteCommand
@@ -475,7 +486,7 @@ There are some additional folders which are closed by default. You must open the
             SQLdr = sql.ExecuteReader
             While SQLdr.Read
                 Form1.ProgressBar1.Value += 1
-                Dim poly As Polygon = GeoJsonToGeometry(SQLdr("geometry"))
+                Dim poly As NetTopologySuite.Geometries.Polygon = FromGeoJsonToNTS(SQLdr("geometry"))
                 If poly.IsEmpty Then
                     sqlR.CommandText = $"UPDATE DXCC SET geometry=NULL WHERE DXCCnum={SQLdr("DXCCnum")}"
                     sqlR.ExecuteNonQuery()
@@ -484,63 +495,98 @@ There are some additional folders which are closed by default. You must open the
             End While
         End Using
     End Sub
-    Public Async Sub UseOSMLandPolygons()
-        ' Retrieve a land polygon given a position
-        Dim myQuery = New QueryParameters, sql As SqliteCommand, SQLdr As SqliteDataReader
-        Dim EntityList As New List(Of String) From {{"Antarctica"}}
+
+    Public Sub UseOSMLandPolygons()
+
+        Dim gf = NtsGeometryServices.Instance.CreateGeometryFactory(4326)
+        Dim shpPath = "D:\GIS Data\Land Polygons\complete\land_polygons.shp"
+
+        ' Load all land polygons into memory
+        Dim landPolys As New List(Of NetTopologySuite.Geometries.Geometry)
+
+        Using reader As New ShapefileDataReader(shpPath, gf)
+            While reader.Read()
+                Dim geom As NetTopologySuite.Geometries.Geometry = reader.Geometry
+                landPolys.Add(geom)
+            End While
+        End Using
+
+        AppendText(Form1.TextBox1, $"{landPolys.Count} land polygons loaded{vbCrLf}")
+
+        Dim entityList As New List(Of String) From {"Antarctica"}
 
         Using connect As New SqliteConnection(DXCC_DATA)
             connect.Open()
-            sql = connect.CreateCommand
-            Dim Features = Await ShapefileFeatureTable.OpenAsync("D:\GIS Data\Land Polygons\complete\land_polygons.shp")
-            AppendText(Form1.TextBox1, $"{Features.NumberOfFeatures} land polygons loaded{vbCrLf}")
 
-            For Each entity In EntityList
-                sql.CommandText = $"SELECT * FROM DXCC WHERE Entity='{SQLescape(entity)}'"   ' update database
-                SQLdr = sql.ExecuteReader
-                SQLdr.Read()
-                Dim position As New MapPoint(SQLdr("lon"), SQLdr("lat"), SpatialReferences.Wgs84)
-                SQLdr.Close()
-                ' Query to find the polygon at the Entity location
-                With myQuery
-                    .ReturnGeometry = True
-                    .Geometry = position
-                    .SpatialRelationship = SpatialRelationship.Intersects
-                    .OutSpatialReference = SpatialReferences.Wgs84
-                    .MaxFeatures = 1
-                End With
-                ' Find the polygon, and update the database
-                Dim feature = Await Features.QueryFeaturesAsync(myQuery)
-                If Not feature.Any Then
-                    AppendText(Form1.TextBox1, $"No data retrieved for {entity}{vbCrLf}")
-                Else
-                    AppendText(Form1.TextBox1, $"Extracted data for {entity}{vbCrLf}")
-                    Dim geometry As Polygon = feature(0).Geometry
-                    Dim poly = GeneralizeByPart(geometry)                   ' reduce point count
-                    poly = FixRingOrientation(poly)
-                    sql.CommandText = "UPDATE DXCC SET geometry=@geom WHERE Entity=@entity"
-                    sql.Parameters.Clear()
-                    sql.Parameters.AddWithValue("@geom", GeometryToGeoJson(poly))
-                    sql.Parameters.AddWithValue("@entity", entity)
+            For Each entity In entityList
 
-                    sql.ExecuteNonQuery()
+                ' Get DXCC coordinates
+                Dim sql = connect.CreateCommand()
+                sql.CommandText = $"SELECT * FROM DXCC WHERE Entity='{SQLescape(entity)}'"
+                Dim dr = sql.ExecuteReader()
 
+                If Not dr.Read() Then
+                    AppendText(Form1.TextBox1, $"DXCC entry not found for {entity}{vbCrLf}")
+                    Continue For
                 End If
+
+                Dim lon As Double = dr("lon")
+                Dim lat As Double = dr("lat")
+                dr.Close()
+
+                Dim pt As New Point(lon, lat) With {.SRID = 4326}
+
+                ' Find the land polygon containing the point
+                Dim match As NetTopologySuite.Geometries.Geometry = Nothing
+
+                For Each poly In landPolys
+                    If poly.Contains(pt) OrElse poly.Intersects(pt) Then
+                        match = poly
+                        Exit For
+                    End If
+                Next
+
+                If match Is Nothing Then
+                    AppendText(Form1.TextBox1, $"No land polygon found for {entity}{vbCrLf}")
+                    Continue For
+                End If
+
+                AppendText(Form1.TextBox1, $"Extracted land polygon for {entity}{vbCrLf}")
+
+                ' Optional: generalize (your existing NTS version)
+                Dim polyGen As NetTopologySuite.Geometries.Geometry = Generalize(match)
+
+                ' Save to DB as GeoJSON
+                Dim writer As New GeoJsonWriter()
+                Dim json As String = writer.Write(polyGen)
+
+                sql = connect.CreateCommand()
+                sql.CommandText = "UPDATE DXCC SET geometry=@geom WHERE Entity=@entity"
+                sql.Parameters.AddWithValue("@geom", json)
+                sql.Parameters.AddWithValue("@entity", entity)
+                sql.ExecuteNonQuery()
+
             Next
         End Using
-        AppendText(Form1.TextBox1, "Done")
+
     End Sub
     Public Sub InnerRings()
-        ' Find countries with inner rings. Some are genuine
-        Dim KnownInner As New List(Of String) From {"Argentina", "Australia", "Belarus", "Belgium", "China", "Fed Rep of Germany", "France", "French Polynesia", "Indonesia", "Italy", "Kyrgyzstan", "Mozambique", "Netherlands", "Oman", "Paraguay", "Republic of South Africa", "Serbia", "Spain", "Switzerland", "United Arab Emirates", "Uruguay", "Uzbekistan"}     ' list of entities known to contain genuine inner(s) (enclaves)
-        Dim sql As SqliteCommand, SQLdr As SqliteDataReader, sqlR As SqliteCommand
+
+        Dim KnownInner As New List(Of String) From {
+        "Argentina", "Australia", "Belarus", "Belgium", "China", "Fed Rep of Germany",
+        "France", "French Polynesia", "Indonesia", "Italy", "Kyrgyzstan", "Mozambique",
+        "Netherlands", "Oman", "Paraguay", "Republic of South Africa", "Serbia",
+        "Spain", "Switzerland", "United Arab Emirates", "Uruguay", "Uzbekistan"
+    }
+
+        Dim sql As SqliteCommand, SQLdr As SqliteDataReader
+
         Using connect As New SqliteConnection(DXCC_DATA)
             connect.Open()
-            sql = connect.CreateCommand
-            sqlR = connect.CreateCommand
-            ' Find how many DXCC have geometry
-            sql.CommandText = "SELECT COUNT(*) as Total FROM DXCC WHERE geometry IS NOT NULL"
-            SQLdr = sql.ExecuteReader
+
+            sql = connect.CreateCommand()
+            sql.CommandText = "SELECT COUNT(*) AS Total FROM DXCC WHERE geometry IS NOT NULL"
+            SQLdr = sql.ExecuteReader()
             SQLdr.Read()
 
             With Form1.ProgressBar1
@@ -549,310 +595,151 @@ There are some additional folders which are closed by default. You must open the
                 .Maximum = SQLdr("Total")
             End With
             SQLdr.Close()
-            sql.CommandText = "SELECT * FROM DXCC WHERE geometry IS NOT NULL ORDER BY Entity"
-            SQLdr = sql.ExecuteReader
-            While SQLdr.Read
-                Form1.ProgressBar1.Value += 1
-                If Not KnownInner.Contains(SQLdr("Entity")) Then
-                    Dim poly As Polygon = GeoJsonToGeometry(SQLdr("geometry"))
-                    For Each prt In poly.Parts
-                        If PolygonArea(prt.Points) > 0 Then
-                            ' calculate centroid
-                            Dim x As Double = 0, y As Double = 0, count = 0
-                            For Each pnt In prt.Points
-                                x += pnt.X
-                                y += pnt.Y
-                                count += 1
-                            Next
-                            x /= count
-                            y /= count
-                            AppendText(Form1.TextBox1, $"Inner ring(s): {SQLdr("Entity")} at {y:f6},{x:f6}{vbCrLf}")
-                        End If
-                    Next
 
+            sql.CommandText = "SELECT * FROM DXCC WHERE geometry IS NOT NULL ORDER BY Entity"
+            SQLdr = sql.ExecuteReader()
+
+            While SQLdr.Read()
+                Form1.ProgressBar1.Value += 1
+
+                Dim entity As String = SQLdr("Entity")
+                If KnownInner.Contains(entity) Then Continue While
+
+                ' Load geometry (Polygon or MultiPolygon)
+                Dim geom As NetTopologySuite.Geometries.Geometry = FromGeoJsonToNTS(SQLdr("geometry"))
+
+                ' Handle MultiPolygon by iterating each polygon
+                Dim polys As New List(Of NetTopologySuite.Geometries.Polygon)
+
+                If TypeOf geom Is NetTopologySuite.Geometries.Polygon Then
+                    polys.Add(DirectCast(geom, NetTopologySuite.Geometries.Polygon))
+                ElseIf TypeOf geom Is NetTopologySuite.Geometries.MultiPolygon Then
+                    Dim mp = DirectCast(geom, NetTopologySuite.Geometries.MultiPolygon)
+                    For i = 0 To mp.NumGeometries - 1
+                        polys.Add(DirectCast(mp.GetGeometryN(i), NetTopologySuite.Geometries.Polygon))
+                    Next
                 End If
+
+                ' Check each polygon for interior rings
+                For Each poly In polys
+                    Dim holeCount = poly.NumInteriorRings
+
+                    If holeCount > 0 Then
+                        For i = 0 To holeCount - 1
+                            Dim hole As LinearRing = poly.GetInteriorRingN(i)
+                            Dim coords = hole.Coordinates
+
+                            ' Compute centroid of the hole
+                            Dim cx As Double = 0, cy As Double = 0
+                            For Each c In coords
+                                cx += c.X
+                                cy += c.Y
+                            Next
+                            cx /= coords.Length
+                            cy /= coords.Length
+
+                            AppendText(Form1.TextBox1,
+                            $"Inner ring(s): {entity} at {cy:F6},{cx:F6}{vbCrLf}")
+                        Next
+                    End If
+                Next
+
             End While
         End Using
     End Sub
 
-    Public Async Sub KMLArcgis()
+    Public Sub KMLnts()
+
         Dim sql As SqliteCommand, sqldr As SqliteDataReader
         Const BaseFilename = "DXCC Map"
-        Dim Document = New KmlDocument With {
-            .Name = "DXCC Map of the World"
-        }
-        Dim Folder = New KmlFolder
-        Document.ChildNodes.Add(Folder)
-        Folder.Name = "DXCC Entities"
-        Using connect As New SqliteConnection(DXCC_DATA)
+
+        Using connect As New SqliteConnection(DXCC_DATA),
+            kml As New StreamWriter($"{BaseFilename}.kml", False)
+
             connect.Open()
-            ' Create list of DXCC to convert to KML (all)
-            sql = connect.CreateCommand
-            sql.CommandText = "Select * FROM `DXCC` WHERE `Deleted`=0 And `geometry` Is Not NULL ORDER BY `Entity`"     ' fetch all geometry
-            sqldr = sql.ExecuteReader
-            While sqldr.Read
-                ' get the geometry which is in GeoJSON format, convert to Esri geometry, and then to KML geometry
-                Dim geom = LoadPolygon(sqldr("geometry"))
-                Dim labelPoint = geom.LabelPoint
-                Dim kmlgeo As New KmlGeometry(geom, KmlAltitudeMode.ClampToGround, False, True)
-                Dim placemark As New KmlPlacemark(kmlgeo)
-                placemark.Name = sqldr("Entity")
-                Folder.ChildNodes.Add(placemark)
+
+            ' Write KML header
+            kml.WriteLine("<?xml version=""1.0"" encoding=""UTF-8""?>")
+            kml.WriteLine("<kml xmlns=""http://www.opengis.net/kml/2.2"">")
+            kml.WriteLine("<Document>")
+            kml.WriteLine("<name>DXCC Map of the World</name>")
+            kml.WriteLine("<Folder>")
+            kml.WriteLine("<name>DXCC Entities</name>")
+
+            ' Query DXCC geometries
+            sql = connect.CreateCommand()
+            sql.CommandText = "SELECT * FROM DXCC WHERE Deleted=0 AND geometry IS NOT NULL ORDER BY Entity"
+            sqldr = sql.ExecuteReader()
+
+            While sqldr.Read()
+
+                Dim entity As String = sqldr("Entity")
+                Dim geomJson As String = sqldr("geometry")
+
+                ' Load NTS geometry
+                Dim geom As NetTopologySuite.Geometries.Geometry = FromGeoJsonToNTS(geomJson)
+
+                ' Write placemark
+                kml.WriteLine("<Placemark>")
+                kml.WriteLine($"<name>{entity}</name>")
+
+                ' Write polygon(s)
+                WriteKmlSingleOrMultiPolygon(geom, kml, 1)
+
+                kml.WriteLine("</Placemark>")
             End While
+
             sqldr.Close()
-            Await Document.SaveAsAsync($"{BaseFilename}.kml")
-            ' compress to zip file
-            'System.IO.File.Delete(BaseFilename & ".kmz")
-            'Dim zip As ZipArchive = ZipFile.Open(BaseFilename & ".kmz", ZipArchiveMode.Create)    ' create new archive file
-            'zip.CreateEntryFromFile(BaseFilename & ".kml", "doc.kml", CompressionLevel.Optimal)   ' compress output file
-            'zip.Dispose()
-            'Dim kmlSize As Long = FileLen(BaseFilename & ".kml")
-            'Dim kmzSize As Long = FileLen(BaseFilename & ".kmz")
-            'AppendText(form1.textbox1, $"KML file {BaseFilename} of {kmlSize / 1024:f0} Kb compressed to {kmzSize / 1024:f0} Kb, i.e. {kmzSize / kmlSize * 100:f0}%{vbCrLf}")
-            AppendText(Form1.TextBox1, $"Done{vbCrLf}")
+
+            ' Close folder + document
+            kml.WriteLine("</Folder>")
+            kml.WriteLine("</Document>")
+            kml.WriteLine("</kml>")
+
         End Using
+
+        AppendText(Form1.TextBox1, "Done" & vbCrLf)
+
     End Sub
-    Public Sub FindIARURegion()
-        ' Find IARU region for entities missing one
-        Dim IARUlines As New Dictionary(Of Integer, Polyline)       ' IARU boundary lines
-        Dim IARU As New Dictionary(Of Integer, Integer()) From {
-            {1, {1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 16, 17, 21}},
-            {2, {1, 2, 3, 4, 5, 6, 10, 12, 13, 14, 16, 17, 21, 22, 23, 24, 26}},
-            {3, {7, 8, 9, 10, 11, 12, 13, 14, 22, 23, 24, 26}}
-            }
-        Dim IARUPoly As New Dictionary(Of Integer, Polygon), sql As SqliteCommand, sqldr As SqliteDataReader, LineCounts As New Dictionary(Of Integer, Integer)
-        Dim IARUregions As New Dictionary(Of Integer, Integer)
 
-        ' Check that each line appears exactly twice in the IARU matrix
-        For i = 1 To 26 : LineCounts.Add(i, 0) : Next
-        For rgn = 1 To 3
-            For i = LBound(IARU(rgn)) To UBound(IARU(rgn)) : LineCounts(IARU(rgn)(i)) += 1 : Next
-        Next
-        For i = 1 To LineCounts.Count
-            If LineCounts(i) <> 2 Then AppendText(Form1.TextBox1, $"Invalid line count of {LineCounts(i)} for line {i}{vbCrLf}")
-        Next
+    Function Generalize(poly As NetTopologySuite.Geometries.Polygon) As NetTopologySuite.Geometries.Polygon
 
-        Using connect As New SqliteConnection(DXCC_DATA)
-            connect.Open()
-            ' Retrieve all IARU line segments
-            sql = connect.CreateCommand
-            sql.CommandText = "Select * FROM `IARU`"     ' fetch all geometry
-            sqldr = sql.ExecuteReader
-            While sqldr.Read
-                IARUlines.Add(sqldr("line"), Geometry.FromJson(sqldr("geometry")))
-            End While
-            sqldr.Close()
-            ' Make polygons for all 3 regions
-            For rgn = 1 To 3
-                AppendText(Form1.TextBox1, $"Processing region {rgn}{vbCrLf}")
-                ' make a polygon for this region
-                Dim plb As New PolylineBuilder(SpatialReferences.Wgs84)
-                For i = LBound(IARU(rgn)) To UBound(IARU(rgn))
-                    ' add each line to a region
-                    For Each prt In IARUlines(IARU(rgn)(i)).Parts
-                        plb.AddPart(prt)
-                    Next
-                Next
-                ' round all X,Y coordinates
-                For prt = 0 To plb.Parts.Count - 1
-                    For pnt = 0 To plb.Parts(prt).Points.Count - 1
-                        plb.Parts(prt).SetPoint(pnt, New MapPoint(Math.Round(plb.Parts(prt).Points(pnt).X, 3), Math.Round(plb.Parts(prt).Points(pnt).Y, 3), SpatialReferences.Wgs84))
-                    Next
-                Next
-                Repair(plb)
-                ' TODO: fix this
-                'Dim poly As Polygon = CreatePolygon(plb)
-                'If rgn = 2 Then poly = ReversePolygon(poly)
-                ''poly = poly.Simplify
-                'poly = NormalizeCentralMeridian(poly)
-                'IARUPoly.Add(rgn, poly)
-            Next
-            ' make a KML file for each region
-            Using kml As New StreamWriter($"{Application.StartupPath}\IARU Regions.kml")
-                kml.WriteLine(KMLheader)
-                Dim styles = New String() {"", "#red", "#blue", "#yellow"}
-                For r = 1 To 3
-                    kml.WriteLine($"<Placemark><name>IARU region {r}</name><styleUrl>{styles(r)}</styleUrl>")
-                    KMLPolygon(kml, IARUPoly(r), 1, False)
-                    kml.WriteLine("</Placemark>")
-                Next
-                kml.WriteLine(KMLfooter)
-            End Using
-            ' Resolve IARU region where it is 0
-            Dim count = 0, total = 0
-            sql.CommandText = "Select * FROM `DXCC` WHERE IARU=0 AND Deleted=0 AND geometry IS NOT NULL ORDER By Entity"     ' fetch all geometry
-            sqldr = sql.ExecuteReader
-            While sqldr.Read
-                total += 1
-                Dim geom = GeoJsonToGeometry(sqldr("geometry"))
-                Dim regions As New List(Of Integer)
-                If IARUPoly(1).Intersects(geom) Then regions.Add(1)
-                If Not IARUPoly(2).Intersects(geom) Then regions.Add(2)
-                If IARUPoly(3).Intersects(geom) Then regions.Add(3)
-                If regions.Count = 1 Then
-                    AppendText(Form1.TextBox1, $"{sqldr("Entity")} is in IARU Region {regions(0)}{vbCrLf}")
-                    IARUregions.Add(sqldr("DXCCnum"), regions(0))
-                    count += 1
-                Else
-                    AppendText(Form1.TextBox1, $"{sqldr("Entity")} could not be isolated to a single region {regions}{vbCrLf}")
-                End If
-            End While
-            sqldr.Close()
-            ' Update data
-            For Each entry In IARUregions
-                sql.CommandText = $"UPDATE `DXCC` SET IARU={entry.Value} WHERE DXCCnum={entry.Key}"   ' update data
-                sql.ExecuteNonQuery()
-            Next
-            AppendText(Form1.TextBox1, $"Done. {count} out of {total} regions resolved{vbCrLf}")
-        End Using
-    End Sub
-    Sub Repair(ByRef plb As PolylineBuilder)
-        ' Repair collection of polylines
-        ' All lines must connect to another
-        For outer = 0 To plb.Parts.Count - 1
-            Dim StartTouch = False, EndTouch = False
-            For inner = 0 To plb.Parts.Count - 1
-                If outer <> inner Then
-                    If CoIncident(plb.Parts(outer).StartPoint, plb.Parts(inner).StartPoint) Or
-                   CoIncident(plb.Parts(outer).StartPoint, plb.Parts(inner).EndPoint) Then
-                        StartTouch = True
-                    End If
-                    If CoIncident(plb.Parts(outer).EndPoint, plb.Parts(inner).EndPoint) Or
-                       CoIncident(plb.Parts(outer).EndPoint, plb.Parts(inner).StartPoint) Then
-                        EndTouch = True
-                    End If
-                    If StartTouch And EndTouch Then Exit For
-                End If
-            Next
-            If Not StartTouch Then
-                AppendText(Form1.TextBox1, $"line {outer} Start does not touch any other line{vbCrLf}Attempting repair ")
-                ' Find the nearest matching start/end
-                Dim ClosestDistance As Double = Double.MaxValue, ClosestIndex As Integer, ClosestEnd As String, OtherEnd As String, distance As Double
-                For other = 0 To plb.Parts.Count - 1
-                    If outer <> other Then
-                        distance = GeometryEngine.Distance(plb.Parts(outer).StartPoint, plb.Parts(other).StartPoint)      ' calculate distance to all other starts
-                        If distance < ClosestDistance Then
-                            ClosestDistance = distance
-                            ClosestIndex = other
-                            OtherEnd = "Start"
-                            ClosestEnd = "Start"
-                        End If
-                        distance = GeometryEngine.Distance(plb.Parts(outer).StartPoint, plb.Parts(other).EndPoint)      ' calculate distance to all other starts
-                        If distance < ClosestDistance Then
-                            ClosestDistance = distance
-                            ClosestIndex = other
-                            OtherEnd = "End"
-                            ClosestEnd = "Start"
-                        End If
-                    End If
-                Next
-                AppendText(Form1.TextBox1, $"Closest to line {outer} {ClosestEnd} is line {ClosestIndex} {OtherEnd} at distance of {ClosestDistance:f3}deg{vbCrLf}")
-                If ClosestDistance < 0.1 Then
-                    ' Repair
-                    Dim node As MapPoint
-                    Select Case OtherEnd
-                        Case "Start" : node = plb.Parts(ClosestIndex).StartPoint
-                        Case "End" : node = plb.Parts(ClosestIndex).EndPoint
-                    End Select
-                    plb.Parts(outer).SetPoint(0, node)      ' reset start
-                    AppendText(Form1.TextBox1, $"Repaired{vbCrLf}")
-                End If
-            End If
-
-            If Not EndTouch Then
-                AppendText(Form1.TextBox1, $"line {outer} End does not touch any other line{vbCrLf}Attempting repair ")
-                ' Find the nearest matching start/end
-                Dim ClosestDistance As Double = Double.MaxValue, ClosestIndex As Integer, ClosestEnd As String, OtherEnd As String, distance As Double
-                For other = 0 To plb.Parts.Count - 1
-                    If outer <> other Then
-                        distance = GeometryEngine.Distance(plb.Parts(outer).EndPoint, plb.Parts(other).StartPoint)      ' calculate distance to all other starts
-                        If distance < ClosestDistance Then
-                            ClosestDistance = distance
-                            ClosestIndex = other
-                            OtherEnd = "Start"
-                            ClosestEnd = "End"
-                        End If
-                        distance = GeometryEngine.Distance(plb.Parts(outer).EndPoint, plb.Parts(other).EndPoint)      ' calculate distance to all other starts
-                        If distance < ClosestDistance Then
-                            ClosestDistance = distance
-                            ClosestIndex = other
-                            OtherEnd = "End"
-                            ClosestEnd = "End"
-                        End If
-                    End If
-                Next
-                AppendText(Form1.TextBox1, $"Closest to line {outer} {ClosestEnd} is line {ClosestIndex} {OtherEnd} at distance of {ClosestDistance:f3}deg{vbCrLf}")
-                If ClosestDistance < 0.1 Then
-                    ' Repair
-                    Dim node As MapPoint
-                    Select Case OtherEnd
-                        Case "Start" : node = plb.Parts(ClosestIndex).StartPoint
-                        Case "End" : node = plb.Parts(ClosestIndex).EndPoint
-                    End Select
-                    plb.Parts(outer).SetPoint(plb.Parts(outer).Points.Count - 1, node)      ' reset end
-                    AppendText(Form1.TextBox1, $"Repaired{vbCrLf}")
-                End If
-            End If
-        Next
-    End Sub
-    Function Generalize(poly As Polygon) As Polygon
-        ' Generalize a polygon. If generalized out of existence then return original polygon
-        Dim BeforeParts As Integer, BeforePoints As Integer = 0, AfterParts As Integer, AfterPoints As Integer = 0, timer As New Stopwatch
-
+        Dim timer As New Stopwatch()
         timer.Start()
-        BeforeParts = poly.Parts.Count
-        For Each prt In poly.Parts
-            BeforePoints += prt.PointCount
-        Next
-        Dim distance = GeometryEngine.DistanceGeodetic(New MapPoint(poly.Extent.XMin, poly.Extent.YMin, poly.SpatialReference), New MapPoint(poly.Extent.XMax, poly.Extent.YMax, poly.SpatialReference), LinearUnits.Meters, AngularUnits.Degrees, GeodeticCurveType.Geodesic)
-        Dim GeneralizeDistance = Math.Min(CLOSENESS, distance.Distance * 0.01)              ' Generalize to 1 percent of envelope size, or CLOSENESS, whichever is less 
-        Dim GeneralizeAngle As Double = RadtoDeg(Math.Asin(GeneralizeDistance / EARTH_RADIUS))
-        Dim polyGeneralized As Polygon = GeometryEngine.Generalize(poly, GeneralizeAngle, False)   ' Generalize a polygon to reduce it in size
-        If polyGeneralized.IsEmpty Then polyGeneralized = poly       ' If the polygon is generalized To nothing, the original polygon is returned
-        AfterParts = polyGeneralized.Parts.Count
-        For Each prt In polyGeneralized.Parts
-            AfterPoints += prt.PointCount
-        Next
-        timer.Stop()
-        AppendText(Form1.TextBox1, $"Generalize: before parts {BeforeParts} points {BeforePoints}, after parts {AfterParts} points {AfterPoints}, reduced to {AfterPoints / BeforePoints * 100:f1}% [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")
-        Return polyGeneralized
-    End Function
 
-    Function GeneralizeByPart(poly As Polygon) As Polygon
-        ' Generalizing a Polygon as a single entity often ends up with degenerate or mangled polygons.
-        ' This function generalizes by individual parts. It will use a different generalize distance depending on the size of the part.
-        ' Large parts will be generalized to CLOSENESS meters.
-        ' Small parts will be generalized to 1% of the extent, where 1% of the extent is less than CLOSENESS
-        Dim plb As New PolylineBuilder(SpatialReferences.Wgs84)     ' create a polyline builder to collect generalized parts
-        Dim distance As GeodeticDistanceResult, timer As New Stopwatch
-        Dim BeforePoints As Integer = 0, AfterPoints As Integer = 0, BeforeParts As Integer, AfterParts As Integer
+        ' Count original points
+        Dim beforePoints As Integer = poly.NumPoints
 
-        timer.Start()
-        BeforeParts = poly.Parts.Count
-        For Each prt In poly.Parts
-            BeforePoints += prt.PointCount
-            Dim PolyPart = New Polygon(prt)         ' create a new polygon from the part
-            With PolyPart.Extent
-                distance = GeometryEngine.DistanceGeodetic(New MapPoint(.XMin, .YMin, poly.SpatialReference), New MapPoint(.XMax, .YMax, poly.SpatialReference), LinearUnits.Meters, AngularUnits.Degrees, GeodeticCurveType.Geodesic)  ' calculate diagonal distance of the extent
-            End With
-            Dim GeneralizeDistance = Math.Min(CLOSENESS, distance.Distance * 0.01)              ' Generalize to 1 percent of envelope size, or CLOSENESS, whichever is less 
-            Dim GeneralizeAngle As Double = RadtoDeg(Math.Asin(GeneralizeDistance / EARTH_RADIUS))
-            Dim polyPartGeneralized As Polygon = GeometryEngine.Generalize(PolyPart, GeneralizeAngle, False)   ' Generalize a polygon to reduce it in size
-            For Each p In polyPartGeneralized.Parts
-                plb.AddPart(p)      ' add parts (there should only be one) of the generalized polygon
-            Next
-        Next
-        ' Close all polygons
-        For ndx = 0 To plb.Parts.Count - 1
-            If Not CoIncident(plb.Parts(ndx).StartPoint, plb.Parts(ndx).EndPoint) Then plb.Parts(ndx).AddPoint(plb.Parts(ndx).StartPoint)
-            AfterPoints += plb.Parts(ndx).PointCount
-        Next
-        Dim polyGeneralized As New Polygon(plb.Parts)
-        If polyGeneralized.IsEmpty Then polyGeneralized = poly       ' If the polygon is generalized to nothing, the original polygon is returned
-        AfterParts = polyGeneralized.Parts.Count
+        ' Compute envelope diagonal length (approximate size)
+        Dim env As NetTopologySuite.Geometries.Envelope = poly.EnvelopeInternal
+        Dim dx = env.MaxX - env.MinX
+        Dim dy = env.MaxY - env.MinY
+        Dim diag = Math.Sqrt(dx * dx + dy * dy)
+
+        ' Generalize to 1% of envelope diagonal, capped by CLOSENESS
+        Dim tol = Math.Min(CLOSENESS, diag * 0.01)
+
+        ' Simplify using Douglas-Peucker
+        Dim simplified As NetTopologySuite.Geometries.Geometry = DouglasPeuckerSimplifier.Simplify(poly, tol)
+
+        ' If simplification collapses geometry → return original
+        If simplified Is Nothing OrElse simplified.IsEmpty OrElse Not TypeOf simplified Is NetTopologySuite.Geometries.Polygon Then
+            simplified = poly
+        End If
+
+        Dim polyGen As NetTopologySuite.Geometries.Polygon = DirectCast(simplified, NetTopologySuite.Geometries.Polygon)
+
+        ' Count points after simplification
+        Dim afterPoints As Integer = polyGen.NumPoints
+
         timer.Stop()
-        AppendText(Form1.TextBox1, $"GeneralizeByPart: before parts {BeforeParts} points {BeforePoints}, after parts {AfterParts} points {AfterPoints}, reduced to {AfterPoints / BeforePoints * 100:f1}% [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")
-        Return polyGeneralized
+
+        AppendText(Form1.TextBox1,
+                   $"Generalize: before {beforePoints} pts, after {afterPoints} pts, " &
+                   $"reduced to {afterPoints / beforePoints * 100:F1}% [{timer.Elapsed.TotalSeconds:F1}s]{vbCrLf}")
+
+        Return polyGen
+
     End Function
 
     Public Sub ParseBox()

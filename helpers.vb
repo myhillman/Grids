@@ -2,16 +2,45 @@
 Imports System.Security.Cryptography
 Imports System.Text
 Imports System.Text.RegularExpressions
-Imports Esri.ArcGISRuntime.Geometry
-Imports Newtonsoft.Json
-Imports Newtonsoft.Json.Linq
-Imports System.Diagnostics
 
 
 Public Module helpers
     Public Const DXCC_DATA = "data Source=DXCC.sqlite"     ' the DXCC database
     Public Http As HttpClient
     Public HttpHandler As HttpClientHandler
+    Private ReadOnly _hashVRegistered As New HashSet(Of SqliteConnection)
+    Public Sub EnsureHashVRegistered(conn As SqliteConnection)
+        SyncLock _hashVRegistered
+            If _hashVRegistered.Contains(conn) Then Exit Sub
+            conn.CreateFunction(name:="hashV", function:=Function(values As Object()) HashVariadic(values))
+            _hashVRegistered.Add(conn)
+        End SyncLock
+    End Sub
+    Private Function HashVariadic(values As Object()) As String
+        ' SQLite may pass Nothing or an empty array
+        If values Is Nothing OrElse values.Length = 0 Then
+            Return HashText("")   ' always return a valid hash
+        End If
+
+        Dim parts As New List(Of String)(values.Length)
+
+        For Each v In values
+            If v Is Nothing OrElse v Is DBNull.Value Then
+                parts.Add("")   ' treat NULL as empty string
+            Else
+                ' ToString() can throw on some types → guard it
+                Try
+                    parts.Add(v.ToString())
+                Catch
+                    parts.Add("")   ' fallback
+                End Try
+            End If
+        Next
+
+        Dim combined = String.Join("|", parts)
+        Return HashText(combined)
+    End Function
+
     Public Sub InitHttp()
         HttpHandler = New HttpClientHandler()
 
