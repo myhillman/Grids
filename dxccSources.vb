@@ -17,43 +17,55 @@ Module dxccSources
     End Class
     Public Async Sub BuildAndSaveAllDxccGeometries()
         Dim count As Integer = 0, success As Integer = 0
+        Dim ids As New Dictionary(Of String, Integer)
+
         Using connect As New SqliteConnection(DXCC_DATA)
             connect.Open()
             EnsureHashVRegistered(connect)
 
+            ' Make list of ids to process
             Dim sql = "SELECT DXCCnum, Entity FROM DXCC WHERE (`hash` <> hashV(`rule`,`bbox`,`tolerance_m`,`geometry`) OR geometry is NULL) AND `Deleted`=0 AND `DXCCnum`<>999 ORDER BY `Entity`"
-
             Using cmd As New SqliteCommand(sql, connect)
                 Using r = cmd.ExecuteReader()
                     While r.Read()
-                        count += 1
-                        Debug.WriteLine($"Getting geometry for {r("Entity")}")
-                        Dim id = r("DXCCnum")
-                        Try
-                            Dim result = Await BuildAndSaveDxccGeometry(id, connect)
-                            If result Then
-                                Debug.WriteLine($"Built geometry for DXCC ID: {id}")
-                                success += 1
-                            End If
-                        Catch ex As Exception
-                            Debug.WriteLine($"Error building geometry for DXCC ID {id}: {ex.Message}")
-                        End Try
+                        ids.Add(r("Entity"), r("DXCCnum"))
                     End While
                 End Using
             End Using
         End Using
-        Debug.WriteLine($"Done. Processed {count} DXCC entries. Successfully built {success} geometries.")
+
+        ' Process the list
+        With Form1.ProgressBar1
+                .Minimum = 0
+                .Value = 0
+                .Maximum = ids.Count
+            End With
+
+            For Each id In ids
+                count += 1
+                Debug.WriteLine($"Getting geometry for {id.Key}")
+                Try
+                Dim result = Await BuildAndSaveDxccGeometry(id.Value)
+                If result Then
+                    Debug.WriteLine($"Built geometry for Entity: {id.Key}")
+                    success += 1
+                    End If
+                Catch ex As Exception
+                    Debug.WriteLine($"Error building geometry for Entity {id.Key}: {ex.Message}")
+                End Try
+            Next
+            Debug.WriteLine($"Done. Processed {count} DXCC entries. Successfully built {success} geometries.")
     End Sub
 
-    Public Async Function BuildAndSaveDxccGeometry(dxccId As Integer, connect As SqliteConnection) As Task(Of Boolean)
+    Public Async Function BuildAndSaveDxccGeometry(dxccId As Integer) As Task(Of Boolean)
         Try
-            Dim src = LoadDxccSource(dxccId, connect)
+            Dim src = LoadDxccSource(dxccId)
             Dim geom = Await BuildDXCCGeometryAsync(src)
             If geom Is Nothing OrElse geom.IsEmpty Then
                 Debug.WriteLine($"No geometry built for DXCC ID {dxccId}. Skipping save.")
                 Return False
             End If
-            SaveDxccGeometry(dxccId, geom, connect)
+            SaveDxccGeometry(dxccId, geom)
         Catch ex As Exception
             Debug.WriteLine($"Error building geometry for DXCC ID {dxccId}: {ex.Message}")
             Return False
@@ -61,25 +73,28 @@ Module dxccSources
         Return True
     End Function
 
-    Private Function LoadDxccSource(dxccId As Integer, conn As SqliteConnection) As DxccSource
+    Private Function LoadDxccSource(dxccId As Integer) As DxccSource
 
         Dim sql = "SELECT DXCCnum, Entity, source, rule, bbox, tolerance_m, notes FROM DXCC WHERE DXCCnum=@id"
+        Using connect As New SqliteConnection(DXCC_DATA)
+            connect.Open()
 
-        Using cmd As New SqliteCommand(sql, conn)
-            cmd.Parameters.AddWithValue("@id", dxccId)
+            Using cmd As New SqliteCommand(sql, connect)
+                cmd.Parameters.AddWithValue("@id", dxccId)
 
-            Using r = cmd.ExecuteReader()
-                If Not r.Read() Then Throw New Exception("DXCC not found: " & dxccId)
+                Using r = cmd.ExecuteReader()
+                    If Not r.Read() Then Throw New Exception("DXCC not found: " & dxccId)
 
-                Return New DxccSource With {
-                    .DXCCnum = r("DXCCnum"),
-                    .name = SafeStr(r("Entity")),
-                    .source = SafeStr(r("source")),
-                    .rule = SafeStr(r("rule")),
-                    .tolerance_m = If(r.IsDBNull(r.GetOrdinal("tolerance_m")), 0, r.GetInt32(r.GetOrdinal("tolerance_m"))),
-                    .bbox = SafeStr(r("bbox")),
-                    .notes = SafeStr(r("notes"))
-                }
+                    Return New DxccSource With {
+                        .DXCCnum = r("DXCCnum"),
+                        .name = SafeStr(r("Entity")),
+                        .source = SafeStr(r("source")),
+                        .rule = SafeStr(r("rule")),
+                        .tolerance_m = If(r.IsDBNull(r.GetOrdinal("tolerance_m")), 0, r.GetInt32(r.GetOrdinal("tolerance_m"))),
+                        .bbox = SafeStr(r("bbox")),
+                        .notes = SafeStr(r("notes"))
+                    }
+                End Using
             End Using
         End Using
     End Function
@@ -142,7 +157,7 @@ Module dxccSources
         Return pt.Buffer(deg)
     End Function
 
-    Private Sub SaveDxccGeometry(dxccId As Integer, geom As Geometry, conn As SqliteConnection)
+    Private Sub SaveDxccGeometry(dxccId As Integer, geom As Geometry)
         If geom Is Nothing OrElse geom.IsEmpty Then
             Debug.WriteLine($"Geometry for DXCC {dxccId} is empty. Not saved")
             Return      ' don't save empty geometry
@@ -161,15 +176,17 @@ Module dxccSources
 
         ' Save to DB
         Dim GeoJson As String = FromNTSToGeoJson(geom)   ' GeoJSON
+        Using connect As New SqliteConnection(DXCC_DATA)
+            connect.Open()
+            EnsureHashVRegistered(connect) ' Register hashV ONCE per connection
+            ' Update geometry and hash in one statement
+            Dim sql = "UPDATE DXCC SET geometry = $g, hash = hashV(rule, bbox, tolerance_m, $g) WHERE DXCCnum = $id"
 
-        EnsureHashVRegistered(conn) ' Register hashV ONCE per connection
-        ' Update geometry and hash in one statement
-        Dim sql = "UPDATE DXCC SET geometry = $g, hash = hashV(rule, bbox, tolerance_m, $g) WHERE DXCCnum = $id"
-
-        Using cmd As New SqliteCommand(sql, conn)
-            cmd.Parameters.AddWithValue("$g", GeoJson)
-            cmd.Parameters.AddWithValue("$id", dxccId)
-            cmd.ExecuteNonQuery()
+            Using cmd As New SqliteCommand(sql, connect)
+                cmd.Parameters.AddWithValue("$g", GeoJson)
+                cmd.Parameters.AddWithValue("$id", dxccId)
+                cmd.ExecuteNonQuery()
+            End Using
         End Using
     End Sub
 

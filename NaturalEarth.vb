@@ -101,11 +101,19 @@ Public Module NaturalEarth
         SaveFeaturesToSqlite()
 
     End Function
-    Private Function SaveFeaturesToSqlite()
+    Private Function SaveFeaturesToSqlite() As Task
         Debug.WriteLine("Saving features to SQLite database...")
         Using conn As New SqliteConnection(DXCC_DATA)
             conn.Open()
+            Using pragma = conn.CreateCommand()
+                pragma.CommandText = "PRAGMA journal_mode=WAL;"
+                pragma.ExecuteNonQuery()
+            End Using
 
+            Using pragma = conn.CreateCommand()
+                pragma.CommandText = "PRAGMA busy_timeout=5000;"
+                pragma.ExecuteNonQuery()
+            End Using
             ' Create table if not exists
             Dim createCmd = conn.CreateCommand()
             createCmd.CommandText =
