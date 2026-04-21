@@ -98,12 +98,13 @@ Public Module NaturalEarth
         Await LoadGeoJsonAsync(NE_STATESPROVINCES)
 
         ' After everything is loaded, save to SQLite
-        Await SaveFeaturesToSqliteAsync()
+        SaveFeaturesToSqlite()
 
     End Function
-    Private Async Function SaveFeaturesToSqliteAsync() As Task
+    Private Function SaveFeaturesToSqlite()
+        Debug.WriteLine("Saving features to SQLite database...")
         Using conn As New SqliteConnection(DXCC_DATA)
-            Await conn.OpenAsync()
+            conn.Open()
 
             ' Create table if not exists
             Dim createCmd = conn.CreateCommand()
@@ -116,7 +117,7 @@ Public Module NaturalEarth
                     attributes TEXT
                 );
                 "
-            Await createCmd.ExecuteNonQueryAsync()
+            createCmd.ExecuteNonQuery()
 
             ' ⭐ BEGIN TRANSACTION ⭐
             Using tx = conn.BeginTransaction()
@@ -125,7 +126,8 @@ Public Module NaturalEarth
                 Dim deleteCmd = conn.CreateCommand()
                 deleteCmd.CommandText = "DELETE FROM ne_features;"
                 deleteCmd.Transaction = tx
-                Await deleteCmd.ExecuteNonQueryAsync()
+                Dim deleted = deleteCmd.ExecuteNonQuery()
+                Debug.WriteLine($"{deleted} existing features deleted from database")
 
                 ' Prepare insert command ONCE
                 Dim insertCmd = conn.CreateCommand()
@@ -150,7 +152,7 @@ Public Module NaturalEarth
                     insertCmd.Parameters("$name").Value = name
                     insertCmd.Parameters("$attributes").Value = attrJson
 
-                    Await insertCmd.ExecuteNonQueryAsync()
+                    insertCmd.ExecuteNonQuery()
                 Next
 
                 ' ⭐ COMMIT ⭐

@@ -37,6 +37,7 @@ Module KMLExport
                 End Using
                 Form1.ProgressBar1.Value += 1
             End While
+            SQLdr.Close()
         End Using
     End Sub
 
@@ -107,9 +108,9 @@ Module KMLExport
         sql.CommandText = $"SELECT * FROM `DXCC` WHERE `DXCCnum`={dxcc}"
         Dim SQLdr = sql.ExecuteReader()
         SQLdr.Read()
-
         Dim entity = SafeStr(SQLdr("Entity"))
         Dim geoJson = SafeStr(SQLdr("geometry"))
+        SQLdr.Close()
 
         If String.IsNullOrWhiteSpace(geoJson) Then
             Dim errMsg = $"There is no geometry for {entity} to convert to KML"
@@ -285,8 +286,8 @@ Module KMLExport
             kml.WriteLine("  </MultiGeometry>")
             kml.WriteLine("</Placemark>")
         End While
-
         SQLdr.Close()
+
         kml.WriteLine("</Folder>")
         timer.Stop()
         AppendText(Form1.TextBox1, $" [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")
@@ -508,10 +509,10 @@ Module KMLExport
             SQLdr.Read()
             Dim entity = SafeStr(SQLdr("Entity"))
             Dim geometry As Geometry = FromGeoJsonToNTS(SafeStr(SQLdr("geometry")))   ' NTS geometry
+            SQLdr.Close()
             If Not geometry.IsValid Then
                 Debug.WriteLine($"Geometry for {entity} is invalid")
             End If
-            SQLdr.Close()
 
             Dim extent = geometry.EnvelopeInternal
             Dim factory = geometry.Factory
@@ -722,6 +723,7 @@ Module KMLExport
             kml.WriteLine("</Placemark>")
 
         End While
+        SQLdr.Close()
 
         kml.WriteLine("</Folder>")
         timer.Stop()
@@ -779,7 +781,6 @@ Module KMLExport
             GeoJsonToKML(SQLdr("geometry"), kml)    ' Display zone lines
             kml.WriteLine("</Placemark>")
         End While
-
         SQLdr.Close()
         kml.WriteLine("</Folder>")
 
@@ -793,8 +794,8 @@ Module KMLExport
             GeoJsonToKML(SQLdr("geometry"), kml)    ' Display zone lines
             kml.WriteLine("</Placemark>")
         End While
-
         SQLdr.Close()
+
         kml.WriteLine("</Folder>")
         kml.WriteLine("</Folder>")
 
@@ -844,7 +845,6 @@ Module KMLExport
             While SQLdr.Read()
                 GeoJsonToKML(SQLdr("geometry"), kml)
             End While
-
             SQLdr.Close()
             kml.WriteLine("</Placemark>")
 
@@ -896,6 +896,7 @@ Module KMLExport
 
             kml.WriteLine("</Placemark>")
         End While
+        SQLdr.Close()
 
         kml.WriteLine("</Folder>")
 
@@ -971,6 +972,7 @@ Module KMLExport
 
             kml.WriteLine("</Placemark>")
         End While
+        SQLdr.Close()
 
         kml.WriteLine("</Folder>")
         AppendText(Form1.TextBox1, $" [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")

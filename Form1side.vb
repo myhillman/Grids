@@ -203,6 +203,7 @@ There are some additional folders which are closed by default. You must open the
                     PrefixesFound.Add($"'{prefix}'")
 
                     Dim DXCC = CInt(SQLdr("DXCCnum"))
+                    SQLdr.Close()
 
                     ' Load production grids
                     Dim ProductionGrids As New List(Of String)
@@ -292,7 +293,6 @@ There are some additional folders which are closed by default. You must open the
 
                 End If
 
-                SQLdr.Close()
                 AppendText(Form1.TextBox1, $"{name}{vbCrLf}")
             Next
 
@@ -304,6 +304,7 @@ There are some additional folders which are closed by default. You must open the
                 gridlist.WriteLine($"// Not found {SQLdr2("Entity")} {SQLdr2("prefix")}")
                 count += 1
             End While
+            SQLdr2.Close()
             gridlist.WriteLine($"// Total of {count} DXCC entities not found, {PrefixesFound.Count} found")
 
         End Using
@@ -359,6 +360,7 @@ There are some additional folders which are closed by default. You must open the
             Dim rule = SafeStr(sqldr("rule"))
             Dim bbox = SafeStr(sqldr("bbox"))
             Dim tolerance_m = SafeStr(sqldr("tolerance_m"))
+            sqldr.Close()
             Dim geom = Await EvaluateExpressionAsync(relation, cache)     ' get geometry for the country using the specified query parameters
             Debug.WriteLine("Cache hits: " & cache.CacheHits)
             Debug.WriteLine("Cache misses: " & cache.CacheMisses)
@@ -458,6 +460,7 @@ There are some additional folders which are closed by default. You must open the
                 End With
                 Await sft.AddFeatureAsync(feature)
             End While
+            SQLdr.Close()
         End Using
         sft.Close()
         AppendText(Form1.TextBox1, $"Shapefile file created with {Removed} countries removed and {countries} added{vbCrLf}")
@@ -482,6 +485,7 @@ There are some additional folders which are closed by default. You must open the
                 .Maximum = SQLdr("Total")
             End With
             SQLdr.Close()
+
             sql.CommandText = "SELECT * FROM DXCC WHERE geometry IS NOT NULL ORDER BY Entity"
             SQLdr = sql.ExecuteReader
             While SQLdr.Read
@@ -493,6 +497,7 @@ There are some additional folders which are closed by default. You must open the
                     AppendText(Form1.TextBox1, $"Removed empty geometry for {SQLdr("Entity")}{vbCrLf}")
                 End If
             End While
+            SQLdr.Close()
         End Using
     End Sub
 
@@ -645,6 +650,7 @@ There are some additional folders which are closed by default. You must open the
                 Next
 
             End While
+            SQLdr.Close()
         End Using
     End Sub
 
@@ -688,7 +694,6 @@ There are some additional folders which are closed by default. You must open the
 
                 kml.WriteLine("</Placemark>")
             End While
-
             sqldr.Close()
 
             ' Close folder + document
