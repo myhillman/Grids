@@ -84,7 +84,7 @@ Public Class KMLbyCQ
                     End While
                     SQLdr.Close()
                     kml.WriteLine(KMLheader)
-                    KMLlist(connect, kml, DXCClist)
+                    KMLlist(kml, DXCClist)
                     kml.WriteLine(KMLfooter)
                     kml.Close()
                 Next

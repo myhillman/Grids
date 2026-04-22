@@ -18,52 +18,6 @@ Module Form1side
     Const CLOSENESS = 1000     ' distance for Generalize in meters
     Public KMLheader As String
     Public Const KMLfooter = "</Document></kml>"       ' standard footer for kml file
-    Public ColourMapping = {"", "red", "green", "blue", "yellow", "cyan", "magenta", "white"}   ' colours for polygons
-
-    Public Sub MakeKMLheader()
-        ' Make standard KML header for all files
-        KMLheader = $"<?xml version='1.0' encoding='UTF-8'?>
-<kml xmlns = ""http://www.opengis.net/kml/2.2"" xmlns:gx=""http://www.google.com/kml/ext/2.2"">
-<Document><open>1</open>
-<Style id = ""boundary""><LineStyle><color>ffff0000</color><width>3</width></LineStyle><PolyStyle><color>7Fff0000</color></PolyStyle></Style>
-<Placemark><name>DXCC Map Of the World by VK3OHM</name>
-<description><![CDATA[Copyright: The data included in this document is from www.openstreetmap.org. The data is made available under ODbL.
-    Data extraction by Marc Hillman (VK3OHM).<br><br>
-The main purpose of this data is to display the boundaries of every DXCC entity. Adjacent entities have different colours.<br><br>
-There are some additional folders which are closed by default. You must open them to see the contents. They are:<br><br>
-<table border=1>
-<tr><th>Folder</th><th>Description</th></tr>
-<tr><td>DXCC Entities</td><td>Polygons displaying the boundaries of all DXCC entities.</td></tr>
-<tr><td>Prefixes</td><td>The ARRL prefix for each entity is displayed in the center of the entity.</td></tr>
-<tr><td>Grid Squares</td><td>The boundary of every grid square that intersects with the land of an entity is displayed. The 4-character grid square code is displayed in the center of the grid square. This folder is searchable, so you can use it to locate any grid square.</td></tr>
-<tr><td>IOTA</td><td>Island Groups for Islands On The Air (IOTA).</td></tr>
-<tr><td>CQ Zones</td><td>CQ magazine (now defunct) zones used for Worked All Zones (WAZ) award now administered by ARRL.(Based on data extracted from http://zone-check.eu/.)</td></tr>
-<tr><td>ITU Zones</td><td>International Telegraphic Union (ITU) zones. (Based on data extracted from http://zone-check.eu/.)</td></tr>
-<tr><td>IARU regions</td><td>International Amateur Radio Union (IARU) regions. (Using data created by Tim Makins (EI8IC))</td></tr>
-<tr><td>Timezones</td><td>World time zones</td></tr>
-<tr><td>Antarctic bases</td><td>Location and basic details of Antarctic bases.</td></tr>
-<tr><td>Bounding boxes</td><td>To extract the entity data it was sometimes necessary to use a bounding box to filter the returned geometry. Open this folder will display those boxes. They are not much use in normal operation, but are used for debugging.</td></tr>
-</table>
-<br>A huge thank you to Peter Forbes (VK3QI) who used his extensive knowledge and awesome research skills to validate all the data.
-<br><br>Data created {Now:R}
-]]>
-</description><gx:balloonVisibility>1</gx:balloonVisibility></Placemark>
-<Style id=""red""><PolyStyle><color>9F0000Ff</color><fill>1</fill><outline>1</outline></PolyStyle><LineStyle><color>ff0000ff</color><width>2</width></LineStyle></Style>
-<Style id=""green""><PolyStyle><color>9F00Ff00</color><fill>1</fill><outline>1</outline></PolyStyle><LineStyle><color>ff00ff00</color><width>2</width></LineStyle></Style>
-<Style id=""blue""><PolyStyle><color>9Fff0000</color><fill>1</fill><outline>1</outline></PolyStyle><LineStyle><color>ffff0000</color><width>2</width></LineStyle></Style>
-<Style id=""yellow""><PolyStyle><color>9F00Ffff</color><fill>1</fill><outline>1</outline></PolyStyle><LineStyle><color>ff00ffff</color><width>2</width></LineStyle></Style>
-<Style id =""cyan""><PolyStyle><color>9Fff00ff</color><fill>1</fill><outline>1</outline></PolyStyle><LineStyle><color>ffff00ff</color><width>2</width></LineStyle></Style>
-<Style id=""magenta""><PolyStyle><color>9Fffff00</color><fill>1</fill><outline>1</outline></PolyStyle><LineStyle><color>ffffff00</color><width>2</width></LineStyle></Style>
-<Style id=""white""><PolyStyle><color>9Fffffff</color><fill>1</fill><outline>1</outline></PolyStyle><LineStyle><color>ffffffff</color><width>2</width></LineStyle></Style>
-"
-        ' highlight polygons when hovering
-        For i = 1 To ColourMapping.Length - 1
-            KMLheader &= $"<StyleMap id='boundary_{i}'>{vbCrLf}"
-            KMLheader &= $"<Pair><key>normal</key><styleUrl>#{ColourMapping(i)}</styleUrl></Pair>{vbCrLf}"
-            KMLheader &= $"<Pair><key>highlight</key><styleUrl>#white</styleUrl></Pair>{vbCrLf}"
-            KMLheader &= $"</StyleMap>{vbCrLf}"
-        Next
-    End Sub
 
     Public Delegate Sub SetProgressCallback(pb As System.Windows.Forms.ProgressBar, value As Integer)
     Public Sub UpdateProgressBar(pb As System.Windows.Forms.ProgressBar, value As Integer)
@@ -382,7 +336,7 @@ There are some additional folders which are closed by default. You must open the
                 KML.WriteLine(KMLheader)
                 Using conn As New SqliteConnection(DXCC_DATA)
                     conn.Open()
-                    Placemark(conn, KML, DXCCnum)
+                    Placemark(KML, DXCCnum)
                 End Using
                 KML.WriteLine(KMLfooter)
             End Using

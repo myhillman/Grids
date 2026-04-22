@@ -145,6 +145,11 @@ Module dxccSources
                 lon = -81.5833 : lat = 3.9833
                 radius_m = 1000
 
+            Case "SMOM"
+                ' Sovereign Military Order of Malta (SMOM). The Magistral Palace in Rome
+                lon = 12.4663 : lat = 41.8894
+                radius_m = 500
+
             Case Else
                 Throw New Exception($"FAKE parameter '{fakeName}' not recognised")
         End Select

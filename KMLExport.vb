@@ -1,45 +1,247 @@
 ﻿Imports System.Diagnostics.Eventing.Reader
+Imports System.Drawing.Drawing2D
 Imports System.Globalization
 Imports System.IO
 Imports System.IO.Compression
+Imports System.Net
+Imports System.Net.NetworkInformation
 Imports System.Text
 Imports System.Xml
 Imports System.Xml.XPath
+Imports Esri.ArcGISRuntime.UI.Editing
 Imports NetTopologySuite
 Imports NetTopologySuite.Geometries
 Imports NetTopologySuite.IO
 Imports NetTopologySuite.IO.Handlers
 Imports NetTopologySuite.Operation.Polygonize
 Imports NetTopologySuite.Precision
+Imports SQLitePCL
 Module KMLExport
 
     Const CoordsPerLine = 10          ' coordinates per line
     Private prefixes As New List(Of (p As Point, pfx As String))
+    Public ColourMapping = {"", "red", "green", "blue", "yellow", "cyan", "magenta", "white"}   ' colours for polygons
+    ' standard styles for polygons, and style maps to highlight polygons when hovering
+    Public colours As String = "<Style id=""red""><PolyStyle><color>9F0000Ff</color><fill>1</fill><outline>1</outline></PolyStyle><LineStyle><color>ff0000ff</color><width>2</width></LineStyle></Style>
+<Style id=""green""><PolyStyle><color>9F00Ff00</color><fill>1</fill><outline>1</outline></PolyStyle><LineStyle><color>ff00ff00</color><width>2</width></LineStyle></Style>
+<Style id=""blue""><PolyStyle><color>9Fff0000</color><fill>1</fill><outline>1</outline></PolyStyle><LineStyle><color>ffff0000</color><width>2</width></LineStyle></Style>
+<Style id=""yellow""><PolyStyle><color>9F00Ffff</color><fill>1</fill><outline>1</outline></PolyStyle><LineStyle><color>ff00ffff</color><width>2</width></LineStyle></Style>
+<Style id =""cyan""><PolyStyle><color>9Fff00ff</color><fill>1</fill><outline>1</outline></PolyStyle><LineStyle><color>ffff00ff</color><width>2</width></LineStyle></Style>
+<Style id=""magenta""><PolyStyle><color>9Fffff00</color><fill>1</fill><outline>1</outline></PolyStyle><LineStyle><color>ffffff00</color><width>2</width></LineStyle></Style>
+<Style id=""white""><PolyStyle><color>9Fffffff</color><fill>1</fill><outline>1</outline></PolyStyle><LineStyle><color>ffffffff</color><width>2</width></LineStyle></Style>
+"
+    Function hover() As String
+        Dim sb As New StringBuilder
+        ' highlight polygons when hovering
+        For i = 1 To ColourMapping.Length - 1
+            sb.Append($"<StyleMap id='boundary_{i}'>{vbCrLf}")
+            sb.Append($"<Pair><key>normal</key><styleUrl>#{ColourMapping(i)}</styleUrl></Pair>{vbCrLf}")
+            sb.Append($"<Pair><key>highlight</key><styleUrl>#white</styleUrl></Pair>{vbCrLf}")
+            sb.Append($"</StyleMap>{vbCrLf}")
+        Next
+        Return sb.ToString()
+    End Function
+    Public Sub MakeKMLheader()
+        ' Make standard KML header for all files
+
+        KMLheader = $"<?xml version='1.0' encoding='UTF-8'?>
+<kml xmlns = ""http://www.opengis.net/kml/2.2"" xmlns:gx=""http://www.google.com/kml/ext/2.2"">
+<Document><open>1</open>
+{colours}{hover()}"
+
+    End Sub
     ' prefixes for prefix folder
     Sub MakeKMLAllEntities()
-        Dim sql As SqliteCommand, SQLdr As SqliteDataReader
+
+        ' Collect all DXCC entries first (so no reader is open during KML writing)
+        Dim items As New List(Of (Id As Integer, Entity As String))
+
         Using connect As New SqliteConnection(DXCC_DATA)
             connect.Open()
-            With Form1.ProgressBar1
-                .Minimum = 0
-                .Maximum = 340
-                .Value = 0
-            End With
-            sql = connect.CreateCommand
-            sql.CommandText = ("SELECT * FROM `DXCC` WHERE `DELETED`=0 AND geometry is not null AND `DXCCnum`<>999 ORDER BY `Entity`")
-            SQLdr = sql.ExecuteReader
-            While SQLdr.Read
-                Dim entity = SafeStr(SQLdr("Entity"))
-                Using kml As New StreamWriter(Path.Combine(Application.StartupPath, "KML", $"DXCC_{entity}.kml"), False)
-                    kml.WriteLine(KMLheader)
-                    Placemark(connect, kml, SQLdr("DXCCnum"))
-                    kml.WriteLine(KMLfooter)
+
+            Using cmd = connect.CreateCommand()
+                cmd.CommandText =
+                "Select DXCCnum, Entity 
+                 FROM DXCC 
+                 WHERE Deleted = 0 
+                   AND geometry IS NOT NULL 
+                   AND DXCCnum <> 999 
+                 ORDER BY Entity"
+
+                Using r = cmd.ExecuteReader()
+                    While r.Read()
+                        items.Add((CInt(r("DXCCnum")), SafeStr(r("Entity"))))
+                    End While
                 End Using
-                Form1.ProgressBar1.Value += 1
-            End While
-            SQLdr.Close()
+            End Using
         End Using
+
+        ' Prepare progress bar
+        With Form1.ProgressBar1
+            .Minimum = 0
+            .Maximum = items.Count
+            .Value = 0
+        End With
+
+        ' Now generate KML files (no DB reader open)
+        For Each item In items
+
+            Dim id = item.Id
+            Dim entity = item.Entity
+
+            ' Load geometry fresh (each call opens its own connection)
+            Dim dxcc As DxccGeometryResult = LoadDxccGeometry(id)
+
+            If dxcc IsNot Nothing AndAlso dxcc.Geometry IsNot Nothing AndAlso Not dxcc.Geometry.IsEmpty Then
+
+                ' Build KML using the new module
+                Dim doc As New KmlDocument()
+                doc.AddRawKML(colours) ' add styles to document
+                doc.AddRawKML(hover()) ' add hover styles to document
+
+                ' Construct meta description for placemark
+                Dim meta As New Dictionary(Of String, String)
+                ' Add meta data table entries
+
+                meta("Entity") = KMLescape(dxcc.Entity)
+                meta("DXCC number") = KMLescape(dxcc.DXCCnum)
+                meta("Prefix") = KMLescape(dxcc.prefix)
+                meta("CQ Zone") = KMLescape(dxcc.CQ)
+                meta("ITU Zone") = KMLescape(dxcc.ITU)
+                meta("IARU Region") = KMLescape(dxcc.IARU)
+                meta("Continent") = KMLescape(dxcc.Continent)
+                meta("Start Date") = KMLescape(dxcc.StartDate)
+                meta("lat") = KMLescape($"{dxcc.lat:f3}")
+                meta("lon") = KMLescape($"{dxcc.lon:f3}")
+
+                Dim query As New StringBuilder()
+                If Not IsDBNullorEmpty(dxcc.source) Then query.Append($"{dxcc.source}: ")
+                If Not IsDBNullorEmpty(dxcc.rule) Then query.Append(dxcc.rule)
+                If Not IsDBNullorEmpty(dxcc.bbox) Then query.Append($" ({dxcc.bbox})")
+
+                If query.Length > 0 Then
+                    meta("GIS query") = KMLescape(dxcc.query)
+                End If
+
+                If Not IsDBNullorEmpty(dxcc.notes) Then
+                    meta("Notes") = KMLescape(Hyperlink(dxcc.notes))
+                End If
+                ' Now build description from meta
+                Dim sb As New System.Text.StringBuilder()
+
+                sb.AppendLine("<![CDATA[")
+                sb.AppendLine("<table border='0' cellpadding='2' cellspacing='0'>")
+
+                For Each kv In meta
+                    sb.AppendLine($"<tr><td><b>{kv.Key}:</b></td><td>{kv.Value}</td></tr>")
+                Next
+
+                sb.AppendLine("</table>")
+                sb.AppendLine("]]>")
+
+                Dim pm As New KmlPlacemark With {
+                    .Name = entity,
+                    .Geometry = dxcc.Geometry,
+                    .Description = sb.ToString,
+                    .StyleUrl = $"#boundary_{(CInt(dxcc.Colour) Mod (ColourMapping.Length - 1)) + 1}" ' assign style based on colour index
+                }
+
+                doc.AddPlacemark(pm)
+
+                Dim outPath = Path.Combine(Application.StartupPath, "KML", $"DXCC_{entity}.kml")
+                doc.WriteToFile(outPath)
+            End If
+            Form1.ProgressBar1.Value += 1
+        Next
+
     End Sub
+    Private Function LoadDxccGeometry(id As Integer) As DxccGeometryResult
+        Using conn As New SqliteConnection(DXCC_DATA)
+            conn.Open()
+
+            Using cmd = conn.CreateCommand()
+                cmd.CommandText = "SELECT * FROM DXCC WHERE DXCCnum = $id"
+                cmd.Parameters.AddWithValue("$id", id)
+
+                Using r = cmd.ExecuteReader()
+                    If Not r.Read() Then Return Nothing
+                    Return New DxccGeometryResult With {
+                        .Geometry = LoadPolygon(r("geometry")),
+                        .Entity = SafeStr(r("Entity")),
+                        .DXCCnum = SafeInt(r("DXCCnum")),
+                        .Continent = SafeStr(r("Continent")),
+                        .prefix = SafeStr(r("prefix")),
+                        .CQ = SafeStr(r("CQ")),
+                        .ITU = SafeStr(r("ITU")),
+                        .IARU = SafeStr(r("IARU")),
+                        .lat = SafeDbl(r("lat")),
+                        .lon = SafeDbl(r("lon")),
+                        .StartDate = SafeStr(r("StartDate")),
+                        .endDate = SafeStr(r("endDate")),
+                        .Colour = SafeInt(r("Colour")),
+                        .Flag = SafeStr(r("Flag")),
+                        .query = SafeStr(r("query")),
+                        .bbox = SafeStr(r("bbox")),
+                        .notes = SafeStr(r("notes")),
+                        .relation = SafeStr(r("relation")),
+                        .source = SafeStr(r("source")),
+                        .rule = SafeStr(r("rule")),
+                        .tolerance_m = SafeInt(r("tolerance_m"))
+                        }
+                End Using
+            End Using
+        End Using
+    End Function
+    Public Class DxccGeometryResult
+        Public Property Geometry As Geometry
+        Public Property Entity As String
+        Public Property DXCCnum As Integer
+        Public Property Continent As String
+        Public Property prefix As String
+        Public Property CQ As String
+        Public Property ITU As String
+        Public Property IARU As String
+        Public Property lat As Double
+        Public Property lon As Double
+        Public Property StartDate As String
+        Public Property endDate As String
+        Public Property Colour As Integer
+        Public Property Flag As String
+        Public Property query As String
+        Public Property bbox As String
+        Public Property notes As String
+        Public Property relation As String
+        Public Property source As String
+        Public Property rule As String
+        Public Property tolerance_m As Integer
+    End Class
+    Public Function LoadPolygon(json As String) As Geometry
+        If String.IsNullOrWhiteSpace(json) Then Return Nothing
+
+        Try
+            ' NTS GeoJSON reader
+            Dim reader As New GeoJsonReader()
+
+            ' Parse into NTS geometry
+            Dim geom As Geometry = reader.Read(Of Geometry)(json)
+
+            ' Normalize / fix geometry if needed
+            If geom Is Nothing OrElse geom.IsEmpty Then
+                Return Nothing
+            End If
+
+            ' Ensure polygons are valid
+            If Not geom.IsValid Then
+                geom = geom.Buffer(0) ' classic NTS fix
+            End If
+
+            Return geom
+
+        Catch ex As Exception
+            Debug.WriteLine("LoadPolygon Error: " & ex.Message)
+            Return Nothing
+        End Try
+    End Function
 
     Sub MakeKML()
         ' Make a KML file of all Entity boundaries
@@ -47,33 +249,56 @@ Module KMLExport
         Dim sql As SqliteCommand, SQLdr As SqliteDataReader
 
         Dim BaseFilename As String = Path.Combine(Application.StartupPath, "KML", "DXCC Map of the World")
-        Using connect As New SqliteConnection(DXCC_DATA),
-            kml As New StreamWriter($"{BaseFilename}.kml", False)
+        Using KML As New StreamWriter($"{BaseFilename}.kml", False)
+            Using connect As New SqliteConnection(DXCC_DATA)
+                connect.Open()
+                ' Create list of DXCC to convert to KML (all)
+                sql = connect.CreateCommand
+                sql.CommandText = "Select * FROM `DXCC` WHERE `Deleted`=0 And `geometry` Is Not NULL ORDER BY `Entity`"     ' fetch all geometry
+                SQLdr = sql.ExecuteReader
+                DXCClist.Clear()
 
-            connect.Open()
-            ' Create list of DXCC to convert to KML (all)
-            sql = connect.CreateCommand
-            sql.CommandText = "Select * FROM `DXCC` WHERE `Deleted`=0 And `geometry` Is Not NULL ORDER BY `Entity`"     ' fetch all geometry
-            SQLdr = sql.ExecuteReader
-            DXCClist.Clear()
-
-            While SQLdr.Read
-                DXCClist.Add(SQLdr("DXCCnum"))
-            End While
-            SQLdr.Close()
-            kml.WriteLine(KMLheader)
-            KMLlist(connect, kml, DXCClist)
-            If DXCClist.Contains(15) Or DXCClist.Contains(54) Then EUASborder(kml)      ' kml contains EU or AS Russia, then include the boundary
-            PrefixFolder(kml)
-            GridSquareFolder(connect, kml, DXCClist)
-            IOTAFolder(connect, kml)
-            ZoneFolder(connect, kml)       ' data is lost
-            IARUFolder(connect, kml)
-            TimeZoneFolder(connect, kml)
-            BoundingBoxFolder(connect, kml)
-            AntarcticFolder(connect, kml)
-            kml.WriteLine(KMLfooter)
-            kml.Close()
+                While SQLdr.Read
+                    DXCClist.Add(SQLdr("DXCCnum"))
+                End While
+                SQLdr.Close()
+            End Using
+            KML.WriteLine(KMLheader)
+            KML.WriteLine("<Style id="" boundary""><LineStyle><color>ffff0000</color><width>3</width></LineStyle><PolyStyle><color>7Fff0000</color></PolyStyle></Style>
+<Placemark><name>DXCC Map Of the World by VK3OHM</name>
+<description><![CDATA[Copyright: The Data included in this document Is from www.openstreetmap.org. The data Is made available under ODbL.
+    Data extraction by Marc Hillman (VK3OHM).<br><br>
+The main purpose of this data Is to display the boundaries of every DXCC entity. Adjacent entities have different colours.<br><br>
+There are some additional folders which are closed by default. You must open them to see the contents. They are:<br><br>
+<table border = 1 >
+<tr><th>Folder</th><th>Description</th></tr>
+<tr><td>DXCC Entities</td><td>Polygons displaying the boundaries Of all DXCC entities.</td></tr>
+<tr><td>Prefixes</td><td>The ARRL prefix For Each entity Is displayed In the center Of the entity.</td></tr>
+<tr><td>Grid Squares</td><td>The boundary Of every grid square that intersects With the land Of an entity Is displayed. The 4-character grid square code Is displayed In the center Of the grid square. This folder Is searchable, so you can use it To locate any grid square.</td></tr>
+<tr><td>IOTA</td><td>Island Groups For Islands On The Air (IOTA).</td></tr>
+<tr><td>CQ Zones</td><td>CQ magazine (now defunct) zones used For Worked All Zones (WAZ) award now administered by ARRL.(Based On data extracted from http://zone-check.eu/.)</td></tr>
+<tr><td>ITU Zones</td><td>International Telegraphic Union (ITU) zones. (Based On data extracted from http://zone-check.eu/.)</td></tr>
+<tr><td>IARU regions</td><td>International Amateur Radio Union (IARU) regions. (Using data created by Tim Makins (EI8IC))</td></tr>
+<tr><td>Timezones</td><td>World time zones</td></tr>
+<tr><td>Antarctic bases</td><td>Location And basic details Of Antarctic bases.</td></tr>
+<tr><td>Bounding boxes</td><td>To extract the entity data it was sometimes necessary To use a bounding box To filter the returned geometry. Open this folder will display those boxes. They are Not much use In normal operation, but are used For debugging.</td></tr>
+</table>
+<br>A huge thank you To Peter Forbes (VK3QI) who used his extensive knowledge And awesome research skills To validate all the data.
+<br><br>Data created {Now:R}
+]]>
+</description><gx:balloonVisibility> 1</gx:balloonVisibility></Placemark>")
+            KMLlist(KML, DXCClist)
+            If DXCClist.Contains(15) Or DXCClist.Contains(54) Then EUASborder(KML)      ' kml contains EU or AS Russia, then include the boundary
+            PrefixFolder(KML)
+            GridSquareFolder(KML, DXCClist)
+            IOTAFolder(KML)
+            ZoneFolder(KML)       ' data is lost
+            IARUFolder(KML)
+            TimeZoneFolder(KML)
+            BoundingBoxFolder(KML)
+            AntarcticFolder(KML)
+            KML.WriteLine(KMLfooter)
+            KML.Close()
             ' compress to zip file
             System.IO.File.Delete(BaseFilename & ".kmz")
             Dim zip As ZipArchive = ZipFile.Open(BaseFilename & ".kmz", ZipArchiveMode.Create)    ' create new archive file
@@ -85,7 +310,7 @@ Module KMLExport
             AppendText(Form1.TextBox1, $"Done{vbCrLf}")
         End Using
     End Sub
-    Sub KMLlist(connect As SqliteConnection, kml As StreamWriter, DXCClist As List(Of Integer))
+    Sub KMLlist(kml As StreamWriter, DXCClist As List(Of Integer))
         With Form1.ProgressBar1
             .Minimum = 0
             .Value = 0
@@ -95,87 +320,90 @@ Module KMLExport
         AppendText(Form1.TextBox1, $"Making KML for {DXCClist.Count} Entities{vbCrLf}")
         kml.WriteLine("<Folder><name>DXCC Entities</name><open>0</open><description>Boundaries of DXCC entities</description>")
         For Each dxcc In DXCClist
-            Placemark(connect, kml, dxcc)
+            Placemark(kml, dxcc)
         Next
         kml.WriteLine("</Folder>")
         AppendText(Form1.TextBox1, $"Done{vbCrLf}")
     End Sub
 
-    Sub Placemark(connect As SqliteConnection, kml As StreamWriter, dxcc As Integer)
+    Sub Placemark(kml As StreamWriter, dxcc As Integer)
 
-        ' --- Load DXCC row ---
-        Dim sql = connect.CreateCommand()
-        sql.CommandText = $"SELECT * FROM `DXCC` WHERE `DXCCnum`={dxcc}"
-        Dim SQLdr = sql.ExecuteReader()
-        SQLdr.Read()
-        Dim entity = SafeStr(SQLdr("Entity"))
-        Dim geoJson = SafeStr(SQLdr("geometry"))
-        SQLdr.Close()
+        Using connect As New SqliteConnection(DXCC_DATA)
+            connect.Open()
+            ' --- Load DXCC row ---
+            Dim sql = connect.CreateCommand()
+            sql.CommandText = $"SELECT * FROM `DXCC` WHERE `DXCCnum`={dxcc}"
+            Dim SQLdr = sql.ExecuteReader()
+            SQLdr.Read()
+            Dim entity = SafeStr(SQLdr("Entity"))
+            Dim geoJson = SafeStr(SQLdr("geometry"))
 
-        If String.IsNullOrWhiteSpace(geoJson) Then
-            Dim errMsg = $"There is no geometry for {entity} to convert to KML"
-            AppendText(Form1.TextBox1, errMsg & vbCrLf)
-            kml.WriteLine(errMsg)
-            Exit Sub
-        End If
 
-        ' --- Convert GeoJSON → NTS geometry ---
-        Dim ntsGeom As NetTopologySuite.Geometries.Geometry = FromGeoJsonToNTS(geoJson)
+            If String.IsNullOrWhiteSpace(geoJson) Then
+                Dim errMsg = $"There is no geometry for {entity} to convert to KML"
+                AppendText(Form1.TextBox1, errMsg & vbCrLf)
+                kml.WriteLine(errMsg)
+                Exit Sub
+            End If
 
-        If ntsGeom Is Nothing OrElse ntsGeom.IsEmpty Then
-            Dim errMsg = $"Geometry for {entity} is empty or invalid"
-            AppendText(Form1.TextBox1, errMsg & vbCrLf)
-            kml.WriteLine(errMsg)
-            Exit Sub
-        End If
+            ' --- Convert GeoJSON → NTS geometry ---
+            Dim ntsGeom As NetTopologySuite.Geometries.Geometry = FromGeoJsonToNTS(geoJson)
 
-        AppendText(Form1.TextBox1, $"Making KML for {entity}{vbCrLf}")
+            If ntsGeom Is Nothing OrElse ntsGeom.IsEmpty Then
+                Dim errMsg = $"Geometry for {entity} is empty or invalid"
+                AppendText(Form1.TextBox1, errMsg & vbCrLf)
+                kml.WriteLine(errMsg)
+                Exit Sub
+            End If
 
-        ' --- Start Placemark ---
-        kml.WriteLine($"<Placemark><styleUrl>#boundary_{SQLdr("colour")}</styleUrl>")
-        kml.WriteLine($"<name>{KMLescape(entity)} ({SQLdr("prefix")})</name>")
+            AppendText(Form1.TextBox1, $"Making KML for {entity}{vbCrLf}")
 
-        ' --- Label point using NTS centroid ---
-        Dim centroid As Coordinate = ntsGeom.Centroid.Coordinate
-        Dim centroidPnt = factory.CreatePoint(centroid)
+            ' --- Start Placemark ---
+            kml.WriteLine($"<Placemark><styleUrl>#boundary_{SQLdr("colour")}</styleUrl>")
+            kml.WriteLine($"<name>{KMLescape(entity)} ({SQLdr("prefix")})</name>")
 
-        WriteKmlPoint(centroidPnt, kml, 0)
+            ' --- Label point using NTS centroid ---
+            Dim centroid As Coordinate = ntsGeom.Centroid.Coordinate
+            Dim centroidPnt = factory.CreatePoint(centroid)
 
-        ' Store prefix label for PrefixFolder (now using NTS coordinate)
-        prefixes.Add((centroidPnt, SQLdr("prefix").ToString()))
+            WriteKmlPoint(centroidPnt, kml, 0)
 
-        ' --- ExtendedData ---
-        kml.WriteLine("<ExtendedData>")
-        kml.WriteLine($"<Data name=""Entity""><value>{KMLescape(entity)}</value></Data>")
-        kml.WriteLine($"<Data name=""DXCC number""><value>{SQLdr("DXCCnum")}</value></Data>")
-        kml.WriteLine($"<Data name=""Prefix""><value>{SQLdr("prefix")}</value></Data>")
-        kml.WriteLine($"<Data name=""CQ Zone""><value>{SQLdr("CQ")}</value></Data>")
-        kml.WriteLine($"<Data name=""ITU Zone""><value>{SQLdr("ITU")}</value></Data>")
-        kml.WriteLine($"<Data name=""IARU Region""><value>{SQLdr("IARU")}</value></Data>")
-        kml.WriteLine($"<Data name=""Continent""><value>{SQLdr("Continent")}</value></Data>")
-        kml.WriteLine($"<Data name=""Start Date""><value>{SQLdr("StartDate")}</value></Data>")
-        kml.WriteLine($"<Data name=""lat""><value>{SQLdr("lat"):f3}</value></Data>")
-        kml.WriteLine($"<Data name=""lon""><value>{SQLdr("lon"):f3}</value></Data>")
+            ' Store prefix label for PrefixFolder (now using NTS coordinate)
+            prefixes.Add((centroidPnt, SQLdr("prefix").ToString()))
 
-        Dim query As New StringBuilder()
-        If Not IsDBNullorEmpty(SQLdr("source")) Then query.Append($"{SQLdr("source").ToString().Trim()}: ")
-        If Not IsDBNullorEmpty(SQLdr("rule")) Then query.Append(SQLdr("rule").ToString().Trim())
-        If Not IsDBNullorEmpty(SQLdr("bbox")) Then query.Append($" ({SQLdr("bbox")})")
+            ' --- ExtendedData ---
+            kml.WriteLine("<ExtendedData>")
+            kml.WriteLine($"<Data name=""Entity""><value>{KMLescape(entity)}</value></Data>")
+            kml.WriteLine($"<Data name=""DXCC number""><value>{SQLdr("DXCCnum")}</value></Data>")
+            kml.WriteLine($"<Data name=""Prefix""><value>{SQLdr("prefix")}</value></Data>")
+            kml.WriteLine($"<Data name=""CQ Zone""><value>{SQLdr("CQ")}</value></Data>")
+            kml.WriteLine($"<Data name=""ITU Zone""><value>{SQLdr("ITU")}</value></Data>")
+            kml.WriteLine($"<Data name=""IARU Region""><value>{SQLdr("IARU")}</value></Data>")
+            kml.WriteLine($"<Data name=""Continent""><value>{SQLdr("Continent")}</value></Data>")
+            kml.WriteLine($"<Data name=""Start Date""><value>{SQLdr("StartDate")}</value></Data>")
+            kml.WriteLine($"<Data name=""lat""><value>{SQLdr("lat"):f3}</value></Data>")
+            kml.WriteLine($"<Data name=""lon""><value>{SQLdr("lon"):f3}</value></Data>")
 
-        If query.Length > 0 Then
-            kml.WriteLine($"<Data name=""GIS query""><value>{KMLescape(query.ToString())}</value></Data>")
-        End If
+            Dim query As New StringBuilder()
+            If Not IsDBNullorEmpty(SQLdr("source")) Then query.Append($"{SQLdr("source").ToString().Trim()}: ")
+            If Not IsDBNullorEmpty(SQLdr("rule")) Then query.Append(SQLdr("rule").ToString().Trim())
+            If Not IsDBNullorEmpty(SQLdr("bbox")) Then query.Append($" ({SQLdr("bbox")})")
 
-        If Not IsDBNullorEmpty(SQLdr("notes")) Then
-            kml.WriteLine($"<Data name=""Notes""><value><![CDATA[{Hyperlink(SQLdr("notes"))}]]></value></Data>")
-        End If
+            If query.Length > 0 Then
+                kml.WriteLine($"<Data name=""GIS query""><value>{KMLescape(query.ToString())}</value></Data>")
+            End If
 
-        kml.WriteLine("</ExtendedData>")
+            If Not IsDBNullorEmpty(SQLdr("notes")) Then
+                kml.WriteLine($"<Data name=""Notes""><value><![CDATA[{Hyperlink(SQLdr("notes"))}]]></value></Data>")
+            End If
 
-        ' --- Write polygon(s) ---
-        WriteKmlSingleOrMultiPolygon(ntsGeom, kml, 3)
+            kml.WriteLine("</ExtendedData>")
+            SQLdr.Close()
+            ' --- Write polygon(s) ---
+            WriteKmlSingleOrMultiPolygon(ntsGeom, kml, 3)
 
-        kml.WriteLine("</Placemark>")
+            kml.WriteLine("</Placemark>")
+        End Using
     End Sub
 
     Sub PrefixFolder(kml As StreamWriter)
@@ -205,7 +433,7 @@ Module KMLExport
 
     End Sub
 
-    Sub BoundingBoxFolder(connect As SqliteConnection, kml As StreamWriter)
+    Sub BoundingBoxFolder(kml As StreamWriter)
 
         Const DensifyDegrees = 10
         Dim timer As New Stopwatch
@@ -223,71 +451,72 @@ Module KMLExport
               <LineStyle><color>ffffffff</color><width>2</width></LineStyle>
               <PolyStyle><color>00ffffff</color><fill>0</fill><outline>1</outline></PolyStyle>
             </Style>")
+        Using connect As New SqliteConnection(DXCC_DATA)
+            connect.Open()
+            Dim sql = connect.CreateCommand()
+            sql.CommandText = "SELECT * FROM `DXCC` WHERE `Deleted`=0 AND `bbox` IS NOT NULL AND bbox <> '' ORDER BY `Entity`"
+            Dim SQLdr = sql.ExecuteReader()
 
-        Dim sql = connect.CreateCommand()
-        sql.CommandText = "SELECT * FROM `DXCC` WHERE `Deleted`=0 AND `bbox` IS NOT NULL AND bbox <> '' ORDER BY `Entity`"
-        Dim SQLdr = sql.ExecuteReader()
+            While SQLdr.Read()
 
-        While SQLdr.Read()
+                Dim entity = SafeStr(SQLdr("Entity"))
+                DebugOutput = (entity = "Fiji")
 
-            Dim entity = SafeStr(SQLdr("Entity"))
-            DebugOutput = (entity = "Fiji")
+                ' ParseBBoxOrPoly return NTS geometry
+                Dim ntsGeom = ParseBBoxOrPoly(SQLdr("bbox"))
 
-            ' ParseBBoxOrPoly still returns Runtime geometry → convert to GeoJSON → NTS
-            Dim ntsGeom = ParseBBoxOrPoly(SQLdr("bbox"))
+                ' --- Label point using NTS centroid ---
+                Dim centroid As Coordinate = ntsGeom.Centroid.Coordinate
+                kml.WriteLine("<Placemark>")
+                kml.WriteLine($"  <name>{KMLescape(entity)}</name>")
+                kml.WriteLine("  <styleUrl>#bbox</styleUrl>")
+                kml.WriteLine($"  <Point><coordinates>{centroid.X:f2},{centroid.Y:f2}</coordinates></Point>")
+                kml.WriteLine("  <MultiGeometry>")
 
-            ' --- Label point using NTS centroid ---
-            Dim centroid As Coordinate = ntsGeom.Centroid.Coordinate
-            kml.WriteLine("<Placemark>")
-            kml.WriteLine($"  <name>{KMLescape(entity)}</name>")
-            kml.WriteLine("  <styleUrl>#bbox</styleUrl>")
-            kml.WriteLine($"  <Point><coordinates>{centroid.X:f2},{centroid.Y:f2}</coordinates></Point>")
-            kml.WriteLine("  <MultiGeometry>")
+                ' --- Convert bbox geometry into polygons ---
+                Dim polys As New List(Of NetTopologySuite.Geometries.Polygon)
 
-            ' --- Convert bbox geometry into polygons ---
-            Dim polys As New List(Of NetTopologySuite.Geometries.Polygon)
+                If TypeOf ntsGeom Is NetTopologySuite.Geometries.Polygon Then
+                    polys.Add(DirectCast(ntsGeom, NetTopologySuite.Geometries.Polygon))
 
-            If TypeOf ntsGeom Is NetTopologySuite.Geometries.Polygon Then
-                polys.Add(DirectCast(ntsGeom, NetTopologySuite.Geometries.Polygon))
+                ElseIf TypeOf ntsGeom Is MultiPolygon Then
+                    Dim mp = DirectCast(ntsGeom, MultiPolygon)
+                    For i = 0 To mp.NumGeometries - 1
+                        polys.Add(DirectCast(mp.GetGeometryN(i), NetTopologySuite.Geometries.Polygon))
+                    Next
 
-            ElseIf TypeOf ntsGeom Is MultiPolygon Then
-                Dim mp = DirectCast(ntsGeom, MultiPolygon)
-                For i = 0 To mp.NumGeometries - 1
-                    polys.Add(DirectCast(mp.GetGeometryN(i), NetTopologySuite.Geometries.Polygon))
+                ElseIf TypeOf ntsGeom Is GeometryCollection Then
+                    Dim gc = DirectCast(ntsGeom, GeometryCollection)
+                    For i = 0 To gc.NumGeometries - 1
+                        If TypeOf gc.GetGeometryN(i) Is NetTopologySuite.Geometries.Polygon Then
+                            polys.Add(DirectCast(gc.GetGeometryN(i), NetTopologySuite.Geometries.Polygon))
+                        End If
+                    Next
+
+                ElseIf TypeOf ntsGeom Is LineString OrElse TypeOf ntsGeom Is Point Then
+                    ' Should not happen for bbox, but ignore gracefully
+                    Continue While
+                End If
+
+                If DebugOutput Then Debug.WriteLine($"Fiji polys from bbox: {polys.Count}")
+
+                ' --- Densify + wrap + export ---
+                For Each poly In polys
+
+                    Dim dense = NtsDensify(poly, DensifyDegrees)
+                    Dim wrapped = WrapPolygonTo180(dense)
+
+                    Dim env = wrapped.EnvelopeInternal
+                    Dim dec = DecimalsForBbox(env.MinX, env.MinY, env.MaxX, env.MaxY)
+
+                    WriteKmlPolygon(wrapped, kml, dec)
                 Next
 
-            ElseIf TypeOf ntsGeom Is GeometryCollection Then
-                Dim gc = DirectCast(ntsGeom, GeometryCollection)
-                For i = 0 To gc.NumGeometries - 1
-                    If TypeOf gc.GetGeometryN(i) Is NetTopologySuite.Geometries.Polygon Then
-                        polys.Add(DirectCast(gc.GetGeometryN(i), NetTopologySuite.Geometries.Polygon))
-                    End If
-                Next
-
-            ElseIf TypeOf ntsGeom Is LineString OrElse TypeOf ntsGeom Is Point Then
-                ' Should not happen for bbox, but ignore gracefully
-                Continue While
-            End If
-
-            If DebugOutput Then Debug.WriteLine($"Fiji polys from bbox: {polys.Count}")
-
-            ' --- Densify + wrap + export ---
-            For Each poly In polys
-
-                Dim dense = NtsDensify(poly, DensifyDegrees)
-                Dim wrapped = WrapPolygonTo180(dense)
-
-                Dim env = wrapped.EnvelopeInternal
-                Dim dec = DecimalsForBbox(env.MinX, env.MinY, env.MaxX, env.MaxY)
-
-                WriteKmlPolygon(wrapped, kml, dec)
-            Next
-
-            kml.WriteLine("  </MultiGeometry>")
-            kml.WriteLine("</Placemark>")
-        End While
-        SQLdr.Close()
-
+                kml.WriteLine("  </MultiGeometry>")
+                kml.WriteLine("</Placemark>")
+            End While
+            SQLdr.Close()
+        End Using
         kml.WriteLine("</Folder>")
         timer.Stop()
         AppendText(Form1.TextBox1, $" [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")
@@ -312,7 +541,8 @@ Module KMLExport
         If TypeOf geom Is LineString Then
             Dim ls = DirectCast(geom, LineString)
 
-            kml.WriteLine("<LineString><tessellate>1</tessellate>")
+            ' We are relying on the fact that the input geometry is densified and we don't need to tessellate.
+            kml.WriteLine("<LineString>")
             WriteCoordinates(kml, ls.Coordinates, digits)
             kml.WriteLine("</LineString>")
             Exit Sub
@@ -461,7 +691,7 @@ Module KMLExport
             index += BlockSize
         End While
 
-        kml.WriteLine("</coordinates>")
+        kml.Write("</coordinates>")
     End Sub
 
     Function CrossesAntiMeridian(g As NetTopologySuite.Geometries.Geometry) As Boolean
@@ -471,392 +701,657 @@ Module KMLExport
     End Function
 
     Const EPS = 0.000001      ' a very small number (epsilon)
+    ''' <summary>
+    ''' Generates a complete KML folder containing Maidenhead grid-square overlays
+    ''' for the specified DXCC entities. For each DXCC, the function identifies all
+    ''' 2°×1° grid squares whose envelopes intersect the DXCC geometry, emits a label
+    ''' point for each square, and constructs a minimal rectilinear boundary mesh by
+    ''' merging all horizontal and vertical grid-aligned edges into continuous
+    ''' <LineString> elements.
+    ''' </summary>
+    ''' <param name="kml">
+    ''' The <see cref="StreamWriter"/> used to write KML output. The caller is
+    ''' responsible for opening and closing the stream.
+    ''' </param>
+    ''' <param name="DXCClist">
+    ''' A list of DXCC numeric identifiers for which grid-square overlays should be
+    ''' generated. Each DXCC is processed into its own KML subfolder.
+    ''' </param>
+    ''' <remarks>
+    ''' <para>
+    ''' This method replaces per-square boundary rendering with a significantly more
+    ''' efficient approach: all exposed grid edges (internal and external) are
+    ''' collected, classified by orientation, sorted, and merged into the longest
+    ''' possible continuous horizontal or vertical <LineString> geometries. This
+    ''' reduces KML size dramatically while preserving full visual fidelity of the
+    ''' grid overlay.
+    ''' </para>
+    ''' <para>
+    ''' The workflow is:
+    ''' <list type="number">
+    '''   <item>
+    '''     Load the DXCC geometry from the database and compute the bounding envelope
+    '''     of all possible intersecting grid squares.
+    '''   </item>
+    '''   <item>
+    '''     For each candidate grid square, construct its envelope and test for
+    '''     intersection with the DXCC geometry using NTS.
+    '''   </item>
+    '''   <item>
+    '''     Store all intersecting grid squares and emit a label point for each.
+    '''   </item>
+    '''   <item>
+    '''     For each grid square, determine which of its four edges are exposed by
+    '''     checking for the presence or absence of neighboring squares.
+    '''   </item>
+    '''   <item>
+    '''     Collect all exposed edges into horizontal and vertical segment lists.
+    '''   </item>
+    '''   <item>
+    '''     Sort and merge collinear segments into continuous <LineString> geometries.
+    '''   </item>
+    '''   <item>
+    '''     Write all merged horizontal and vertical lines to the KML output using the
+    '''     existing grid style.
+    '''   </item>
+    ''' </list>
+    ''' </para>
+    ''' <para>
+    ''' The resulting KML contains:
+    ''' <list type="bullet">
+    '''   <item>One folder per DXCC entity.</item>
+    '''   <item>One label placemark per intersecting grid square.</item>
+    '''   <item>A minimal set of merged <LineString> elements representing all grid
+    '''         boundaries.</item>
+    ''' </list>
+    ''' </para>
+    ''' <para>
+    ''' This method does not require the LAND or Drawn tables; all adjacency and
+    ''' boundary determination is computed directly from the set of intersecting
+    ''' grid squares.
+    ''' </para>
+    ''' </remarks>
 
-    Sub GridSquareFolder(connect As SqliteConnection, kml As StreamWriter, DXCClist As List(Of Integer))
+    Sub GridSquareFolder(kml As StreamWriter, DXCClist As List(Of Integer))
+
+        Dim sql As SqliteCommand, SQLdr As SqliteDataReader
+        Dim Squares As New HashSet(Of String)
+        AppendText(Form1.TextBox1, "Making KML for Grid Squares")
+        Using connect As New SqliteConnection(DXCC_DATA)
+            connect.Open()
+            sql = connect.CreateCommand()
+
+            kml.WriteLine("<Folder>")
+            kml.WriteLine("<name>Grid Squares</name>")
+            kml.WriteLine("<visibility>0</visibility>")
+            kml.WriteLine("<open>0</open>")
+            kml.WriteLine("<Style id=""grid"">" &
+                      "<IconStyle><scale>0</scale></IconStyle>" &
+                      "<LabelStyle><color>9Fffff00</color><scale>1.2</scale></LabelStyle>" &
+                      "<LineStyle><color>9Fffff00</color><width>2</width></LineStyle>" &
+                      "</Style>")
+
+            For Each DXCC In DXCClist
+
+                Squares.Clear()
+
+                ' Load DXCC geometry
+                sql.CommandText = $"SELECT * FROM DXCC WHERE DXCCnum={DXCC}"
+                SQLdr = sql.ExecuteReader()
+                SQLdr.Read()
+                Dim entity = SafeStr(SQLdr("Entity"))
+                Dim geometry As Geometry = FromGeoJsonToNTS(SafeStr(SQLdr("geometry")))
+                SQLdr.Close()
+
+                Dim extent = geometry.EnvelopeInternal
+                Dim factory = geometry.Factory
+
+                Dim minI = CInt(Math.Floor(extent.MinX / 2))
+                Dim maxI = CInt(Math.Ceiling(extent.MaxX / 2))
+                Dim minJ = CInt(Math.Floor(extent.MinY / 1))
+                Dim maxJ = CInt(Math.Ceiling(extent.MaxY / 1))
+
+                ' Identify intersecting squares
+                For i = minI To maxI - 1
+                    For j = minJ To maxJ - 1
+                        Dim gx = i * 2
+                        Dim gy = j * 1
+                        Dim sqEnv As New Envelope(gx, gx + 2, gy, gy + 1)
+                        Dim sqPoly As Geometry = factory.ToGeometry(sqEnv)
+                        If sqPoly.Intersects(geometry) Then
+                            Squares.Add($"{i},{j}")
+                        End If
+                    Next
+                Next
+
+                If Squares.Count = 0 Then Continue For
+
+                kml.WriteLine($"<Folder><name>{KMLescape(entity)}</name><visibility>0</visibility><open>0</open>")
+
+                ' Label each square
+                For Each key In Squares
+                    Dim parts = key.Split(","c)
+                    Dim i = CInt(parts(0))
+                    Dim j = CInt(parts(1))
+                    Dim gx = i * 2
+                    Dim gy = j * 1
+                    Dim label = GridSquare(gx, gy)
+                    Dim center As New Coordinate(gx + 1, gy + 0.5)
+
+                    kml.WriteLine("<Placemark><name>" & label & "</name><styleUrl>#grid</styleUrl>")
+                    kml.Write("<Point>")
+                    WriteCoordinates(kml, {center}, 1)
+                    kml.WriteLine("</Point>")
+                    kml.WriteLine("</Placemark>")
+                Next
+
+                ' Collect edges
+                Dim horiz As New Dictionary(Of Integer, List(Of Tuple(Of Integer, Integer)))
+                Dim vert As New Dictionary(Of Integer, List(Of Tuple(Of Integer, Integer)))
+
+                For Each key In Squares
+                    Dim parts = key.Split(","c)
+                    Dim i = CInt(parts(0))
+                    Dim j = CInt(parts(1))
+
+                    Dim x0 = i * 2
+                    Dim x1 = (i + 1) * 2
+                    Dim y0 = j
+                    Dim y1 = j + 1
+
+                    ' Horizontal edges
+                    AddEdge(horiz, y0, x0, x1) ' bottom
+                    AddEdge(horiz, y1, x0, x1) ' top
+
+                    ' Vertical edges
+                    AddEdge(vert, x0, y0, y1) ' left
+                    AddEdge(vert, x1, y0, y1) ' right
+                Next
+
+                ' Draw merged lines
+                kml.WriteLine("<Placemark><styleUrl>#grid</styleUrl><name>lines</name>")
+                kml.WriteLine("<MultiGeometry>")
+
+                ' Horizontal runs
+                Dim sortedY = horiz.Keys.ToList()
+                sortedY.Sort()
+
+                For Each y In sortedY
+                    Dim spans = horiz(y)
+                    spans.Sort(Function(a, b) a.Item1.CompareTo(b.Item1))
+
+                    Dim runStart = spans(0).Item1
+                    Dim runEnd = spans(0).Item2
+
+                    For idx = 1 To spans.Count - 1
+                        If spans(idx).Item1 > runEnd Then
+                            WriteHorizontalLine(kml, factory, y, runStart, runEnd)
+                            runStart = spans(idx).Item1
+                        End If
+                        runEnd = Math.Max(runEnd, spans(idx).Item2)
+                    Next
+
+                    WriteHorizontalLine(kml, factory, y, runStart, runEnd)
+                Next
+
+                ' Vertical runs
+                Dim sortedX = vert.Keys.ToList()
+                sortedX.Sort()
+
+                For Each x In sortedX
+                    Dim spans = vert(x)
+                    spans.Sort(Function(a, b) a.Item1.CompareTo(b.Item1))
+
+                    Dim runStart = spans(0).Item1
+                    Dim runEnd = spans(0).Item2
+
+                    For idx = 1 To spans.Count - 1
+                        If spans(idx).Item1 > runEnd Then
+                            WriteVerticalLine(kml, factory, x, runStart, runEnd)
+                            runStart = spans(idx).Item1
+                        End If
+                        runEnd = Math.Max(runEnd, spans(idx).Item2)
+                    Next
+
+                    WriteVerticalLine(kml, factory, x, runStart, runEnd)
+                Next
+
+                kml.WriteLine("</MultiGeometry>")
+                kml.WriteLine("</Placemark>")
+                kml.WriteLine("</Folder>")
+
+            Next
+
+            kml.WriteLine("</Folder>")
+
+        End Using
+
+    End Sub
+
+
+    Private Sub AddEdge(dict As Dictionary(Of Integer, List(Of Tuple(Of Integer, Integer))),
+                    key As Integer, a As Integer, b As Integer)
+
+        If Not dict.ContainsKey(key) Then dict(key) = New List(Of Tuple(Of Integer, Integer))
+        dict(key).Add(Tuple.Create(a, b))
+
+    End Sub
+
+
+    Private Sub WriteHorizontalLine(kml As StreamWriter, factory As GeometryFactory,
+                                y As Integer, xStart As Integer, xEnd As Integer)
+
+        Dim pts As New List(Of Coordinate)
+        For x = xStart To xEnd Step 2
+            pts.Add(New Coordinate(x, y))
+        Next
+        KMLLineString(kml, factory.CreateLineString(pts.ToArray()), 0)
+
+    End Sub
+
+
+    Private Sub WriteVerticalLine(kml As StreamWriter, factory As GeometryFactory,
+                              x As Integer, yStart As Integer, yEnd As Integer)
+
+        Dim pts As New List(Of Coordinate)
+        For y = yStart To yEnd Step 1
+            pts.Add(New Coordinate(x, y))
+        Next
+        KMLLineString(kml, factory.CreateLineString(pts.ToArray()), 0)
+
+    End Sub
+
+    Sub GridSquareFolderOld(kml As StreamWriter, DXCClist As List(Of Integer))
 
         Dim sql As SqliteCommand, SQLdr As SqliteDataReader, timer As New Stopwatch, Ocean As Integer = 0
         Dim GridSquares As New SortedDictionary(Of String, Envelope)   ' gridsquare → envelope
         Dim Land As New Dictionary(Of String, Integer?)                ' gridsquares known to be land
         Dim Drawn As New Dictionary(Of String, Integer?)               ' gridsquares already drawn
+        Using connect As New SqliteConnection(DXCC_DATA)
+            connect.Open()
+            timer.Start()
+            sql = connect.CreateCommand()
 
-        timer.Start()
-        sql = connect.CreateCommand()
-
-        ' Load list of gridsquares known to be land
-        sql.CommandText = "SELECT * FROM LAND"
-        SQLdr = sql.ExecuteReader()
-        While SQLdr.Read()
-            Land(SafeStr(SQLdr("gridsquare"))) = Nothing
-        End While
-        SQLdr.Close()
-
-        ' Folder header
-        AppendText(Form1.TextBox1, $"Making KML for Grid Square folder ")
-        Application.DoEvents()
-        kml.WriteLine("<Folder>")
-        kml.WriteLine("<name>Grid Squares</name>")
-        kml.WriteLine("<description>Gridsquare overlay</description>")
-        kml.WriteLine("<visibility>0</visibility>")
-        kml.WriteLine("<Style id=""grid""><LabelStyle><color>9Fffff00</color><scale>2</scale></LabelStyle><IconStyle><Icon></Icon></IconStyle><PolyStyle><color>9Fffff00</color><fill>0</fill><outline>1</outline></PolyStyle><LineStyle><color>9Fffff00</color><width>2</width></LineStyle></Style>")
-
-        For Each DXCC In DXCClist
-
-            GridSquares.Clear()
-
-            ' Get DXCC geometry (must now be NTS Geometry)
-            sql.CommandText = $"SELECT * FROM `DXCC` WHERE `DXCCnum`={DXCC}"
+            ' Load list of gridsquares known to be land
+            sql.CommandText = "SELECT * FROM LAND"
             SQLdr = sql.ExecuteReader()
-            SQLdr.Read()
-            Dim entity = SafeStr(SQLdr("Entity"))
-            Dim geometry As Geometry = FromGeoJsonToNTS(SafeStr(SQLdr("geometry")))   ' NTS geometry
-            SQLdr.Close()
-            If Not geometry.IsValid Then
-                Debug.WriteLine($"Geometry for {entity} is invalid")
-            End If
-
-            Dim extent = geometry.EnvelopeInternal
-            Dim factory = geometry.Factory
-
-            ' Envelope covering all possible grid squares for this entity
-            Dim gridExtent As New Envelope(
-            Math.Floor(extent.MinX / GridSquareX) * GridSquareX,
-            Math.Ceiling(extent.MaxX / GridSquareX) * GridSquareX,
-            Math.Floor(extent.MinY / GridSquareY) * GridSquareY,
-            Math.Ceiling(extent.MaxY / GridSquareY) * GridSquareY
-        )
-
-            ' Test every gridsquare in that envelope
-            Dim X = gridExtent.MinX
-            While X < gridExtent.MaxX
-                Dim Y = gridExtent.MinY
-                While Y < gridExtent.MaxY
-
-                    Dim sqEnv As New Envelope(
-                    X,
-                    X + GridSquareX - EPS,
-                    Y,
-                    Y + GridSquareY - EPS
-                )
-
-                    ' Build polygon for this grid square and test intersection with DXCC geometry
-                    Dim sqPoly As Geometry = factory.ToGeometry(sqEnv)
-                    If sqPoly.Intersects(geometry) Then
-
-                        Dim gs As String = GridSquare(X, Y)   ' 4‑char Maidenhead
-
-                        If Land.ContainsKey(gs) Then
-                            If Not GridSquares.ContainsKey(gs) Then
-                                GridSquares.Add(gs, sqEnv)
-                            End If
-                        Else
-                            Ocean += 1
-                        End If
-                    End If
-
-                    Y += GridSquareY
-                End While
-                X += GridSquareX
+            While SQLdr.Read()
+                Land(SafeStr(SQLdr("gridsquare"))) = Nothing
             End While
+            SQLdr.Close()
 
-            ' Folder for this DXCC
-            kml.WriteLine($"<Folder><name>{KMLescape(entity)}</name>")
+            ' Folder header
+            AppendText(Form1.TextBox1, $"Making KML for Grid Square folder ")
+            Application.DoEvents()
+            kml.WriteLine("<Folder>")
+            kml.WriteLine("<name>Grid Squares</name>")
+            kml.WriteLine("<description>Gridsquare overlay</description>")
+            kml.WriteLine("<visibility>0</visibility>")
+            kml.WriteLine("<Style id=""grid""><LabelStyle><color>9Fffff00</color><scale>2</scale></LabelStyle><IconStyle><Icon></Icon></IconStyle><PolyStyle><color>9Fffff00</color><fill>0</fill><outline>1</outline></PolyStyle><LineStyle><color>9Fffff00</color><width>2</width></LineStyle></Style>")
 
-            For Each sq In GridSquares
+            For Each DXCC In DXCClist
 
-                Dim env = sq.Value
-                Dim center As New Coordinate(env.MinX + env.Width / 2, env.MinY + env.Height / 2)
+                GridSquares.Clear()
 
-                kml.WriteLine($"<Placemark><name>{sq.Key}</name><styleUrl>#grid</styleUrl><visibility>0</visibility>")
-
-                If Not Drawn.ContainsKey(sq.Key) Then
-
-                    kml.WriteLine("<MultiGeometry>")
-
-                    ' Label point
-                    kml.Write("<Point>")
-                    WriteCoordinates(kml, {center}, 1)
-                    kml.WriteLine("</Point>")
-
-                    ' Build boundary segments as multipoint (like original logic)
-                    Dim coords As New List(Of Coordinate)
-
-                    ' Grid square above
-                    Dim aboveGS As String = GridSquare(env.MinX, env.MinY + GridSquareY)
-                    If Not GridSquares.ContainsKey(aboveGS) Then
-                        coords.Add(New Coordinate(env.MinX, env.MaxY))   ' first point
-                    End If
-
-                    coords.Add(New Coordinate(env.MaxX, env.MaxY))
-                    coords.Add(New Coordinate(env.MaxX, env.MinY))
-                    coords.Add(New Coordinate(env.MinX, env.MinY))
-
-                    ' Grid square to the left
-                    Dim leftGS As String = GridSquare(env.MinX - GridSquareX, env.MinY)
-                    If Not GridSquares.ContainsKey(leftGS) Then
-                        coords.Add(New Coordinate(env.MinX, env.MaxY))   ' last point
-                    End If
-
-                    Dim mp As MultiPoint = factory.CreateMultiPointFromCoords(coords.ToArray())
-                    KMLMultipoint(kml, mp, 0)
-
-                    kml.WriteLine("</MultiGeometry>")
-
-                    Drawn(sq.Key) = Nothing
+                ' Get DXCC geometry (must now be NTS Geometry)
+                sql.CommandText = $"SELECT * FROM `DXCC` WHERE `DXCCnum`={DXCC}"
+                SQLdr = sql.ExecuteReader()
+                SQLdr.Read()
+                Dim entity = SafeStr(SQLdr("Entity"))
+                Dim geometry As Geometry = FromGeoJsonToNTS(SafeStr(SQLdr("geometry")))   ' NTS geometry
+                SQLdr.Close()
+                If Not geometry.IsValid Then
+                    Debug.WriteLine($"Geometry for {entity} is invalid")
                 End If
 
-                kml.WriteLine("</Placemark>")
+                Dim extent = geometry.EnvelopeInternal
+                Dim factory = geometry.Factory
+
+                ' Envelope covering all possible grid squares for this entity
+                Dim gridExtent As New Envelope(
+                Math.Floor(extent.MinX / GridSquareX) * GridSquareX,
+                Math.Ceiling(extent.MaxX / GridSquareX) * GridSquareX,
+                Math.Floor(extent.MinY / GridSquareY) * GridSquareY,
+                Math.Ceiling(extent.MaxY / GridSquareY) * GridSquareY
+            )
+
+                ' Test every gridsquare in that envelope
+                Dim X = gridExtent.MinX
+                While X < gridExtent.MaxX
+                    Dim Y = gridExtent.MinY
+                    While Y < gridExtent.MaxY
+
+                        Dim sqEnv As New Envelope(
+                        X,
+                        X + GridSquareX - EPS,
+                        Y,
+                        Y + GridSquareY - EPS
+                    )
+
+                        ' Build polygon for this grid square and test intersection with DXCC geometry
+                        Dim sqPoly As Geometry = factory.ToGeometry(sqEnv)
+                        If sqPoly.Intersects(geometry) Then
+
+                            Dim gs As String = GridSquare(X, Y)   ' 4‑char Maidenhead
+
+                            If Land.ContainsKey(gs) Then
+                                If Not GridSquares.ContainsKey(gs) Then
+                                    GridSquares.Add(gs, sqEnv)
+                                End If
+                            Else
+                                Ocean += 1
+                            End If
+                        End If
+
+                        Y += GridSquareY
+                    End While
+                    X += GridSquareX
+                End While
+
+                ' Folder for this DXCC
+                kml.WriteLine($"<Folder><name>{KMLescape(entity)}</name>")
+
+                For Each sq In GridSquares
+
+                    Dim env = sq.Value
+                    Dim center As New Coordinate(env.MinX + env.Width / 2, env.MinY + env.Height / 2)
+
+                    kml.WriteLine($"<Placemark><name>{sq.Key}</name><styleUrl>#grid</styleUrl><visibility>0</visibility>")
+
+                    If Not Drawn.ContainsKey(sq.Key) Then
+
+                        kml.WriteLine("<MultiGeometry>")
+
+                        ' Label point
+                        kml.Write("<Point>")
+                        WriteCoordinates(kml, {center}, 1)
+                        kml.WriteLine("</Point>")
+
+                        ' Build boundary segments as multipoint (like original logic)
+                        Dim coords As New List(Of Coordinate)
+
+                        ' Grid square above
+                        Dim aboveGS As String = GridSquare(env.MinX, env.MinY + GridSquareY)
+                        If Not GridSquares.ContainsKey(aboveGS) Then
+                            coords.Add(New Coordinate(env.MinX, env.MaxY))   ' first point
+                        End If
+
+                        coords.Add(New Coordinate(env.MaxX, env.MaxY))
+                        coords.Add(New Coordinate(env.MaxX, env.MinY))
+                        coords.Add(New Coordinate(env.MinX, env.MinY))
+
+                        ' Grid square to the left
+                        Dim leftGS As String = GridSquare(env.MinX - GridSquareX, env.MinY)
+                        If Not GridSquares.ContainsKey(leftGS) Then
+                            coords.Add(New Coordinate(env.MinX, env.MaxY))   ' last point
+                        End If
+
+                        Dim mp As MultiPoint = factory.CreateMultiPointFromCoords(coords.ToArray())
+                        KMLMultipoint(kml, mp, 0)
+
+                        kml.WriteLine("</MultiGeometry>")
+
+                        Drawn(sq.Key) = Nothing
+                    End If
+
+                    kml.WriteLine("</Placemark>")
+                Next
+
+                kml.WriteLine("</Folder>")
             Next
-
-            kml.WriteLine("</Folder>")
-        Next
-
+        End Using
         kml.WriteLine("</Folder>")
         timer.Stop()
         AppendText(Form1.TextBox1, $" {Ocean} GS eliminated, {Drawn.Count:n0} Unique grid squares [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")
 
     End Sub
 
-    Sub IOTAFolder(connect As SqliteConnection, kml As StreamWriter)
+    Sub IOTAFolder(kml As StreamWriter)
 
         Dim sql As SqliteCommand, SQLdr As SqliteDataReader, timer As New Stopwatch
         Dim sql1 As SqliteCommand, SQLdr1 As SqliteDataReader, count As Integer = 0
 
         timer.Start()
-        sql = connect.CreateCommand()
-        sql1 = connect.CreateCommand()
+        Using connect As New SqliteConnection(DXCC_DATA)
+            connect.Open()
 
-        AppendText(Form1.TextBox1, $"Making KML for IOTA folder ")
-        Application.DoEvents()
+            sql = connect.CreateCommand()
+            sql1 = connect.CreateCommand()
 
-        kml.WriteLine("<Folder>")
-        kml.WriteLine("<name>IOTA</name>")
-        kml.WriteLine("<description>IOTA overlay</description>")
-        kml.WriteLine("<visibility>0</visibility>")
-        kml.WriteLine("<Style id=""iota_normal""><LabelStyle><color>9F00ffff</color><scale>1</scale></LabelStyle><IconStyle><Icon></Icon></IconStyle><PolyStyle><color>3f00ffff</color><fill>1</fill><outline>1</outline></PolyStyle><LineStyle><color>fF00ffff</color><width>2</width></LineStyle></Style>")
-        kml.WriteLine("<Style id=""iota_highlight""><LabelStyle><color>9F00ffff</color><scale>1</scale></LabelStyle><IconStyle><Icon></Icon></IconStyle><PolyStyle><color>3f00ffff</color><fill>0</fill><outline>1</outline></PolyStyle><LineStyle><color>fF00ffff</color><width>2</width></LineStyle></Style>")
-        kml.WriteLine("<StyleMap id='iota'>")
-        kml.WriteLine("<Pair><key>normal</key><styleUrl>#iota_normal</styleUrl></Pair>")
-        kml.WriteLine("<Pair><key>highlight</key><styleUrl>#iota_highlight</styleUrl></Pair>")
-        kml.WriteLine("</StyleMap>")
+            AppendText(Form1.TextBox1, $"Making KML for IOTA folder ")
+            Application.DoEvents()
 
-        sql.CommandText = "SELECT * FROM IOTA_Groups"
-        SQLdr = sql.ExecuteReader()
+            kml.WriteLine("<Folder>")
+            kml.WriteLine("<name>IOTA</name>")
+            kml.WriteLine("<description>IOTA overlay</description>")
+            kml.WriteLine("<visibility>0</visibility>")
+            kml.WriteLine("<Style id=""iota_normal""><LabelStyle><color>9F00ffff</color><scale>1</scale></LabelStyle><IconStyle><Icon></Icon></IconStyle><PolyStyle><color>3f00ffff</color><fill>1</fill><outline>1</outline></PolyStyle><LineStyle><color>fF00ffff</color><width>2</width></LineStyle></Style>")
+            kml.WriteLine("<Style id=""iota_highlight""><LabelStyle><color>9F00ffff</color><scale>1</scale></LabelStyle><IconStyle><Icon></Icon></IconStyle><PolyStyle><color>3f00ffff</color><fill>0</fill><outline>1</outline></PolyStyle><LineStyle><color>fF00ffff</color><width>2</width></LineStyle></Style>")
+            kml.WriteLine("<StyleMap id='iota'>")
+            kml.WriteLine("<Pair><key>normal</key><styleUrl>#iota_normal</styleUrl></Pair>")
+            kml.WriteLine("<Pair><key>highlight</key><styleUrl>#iota_highlight</styleUrl></Pair>")
+            kml.WriteLine("</StyleMap>")
 
-        While SQLdr.Read()
+            sql.CommandText = "SELECT * FROM IOTA_Groups"
+            SQLdr = sql.ExecuteReader()
 
-            count += 1
-            Dim refno = SafeStr(SQLdr("refno"))
+            While SQLdr.Read()
 
-            kml.WriteLine($"<Placemark><name>{refno}</name><styleUrl>#iota</styleUrl><visibility>0</visibility>")
+                count += 1
+                Dim refno = SafeStr(SQLdr("refno"))
 
-            ' Islands list
-            sql1.CommandText = $"SELECT GROUP_CONCAT(name||(iif(comment != '',' ('||comment||')','')),', ') AS Islands FROM IOTA_Islands WHERE refno='{refno}'"
-            SQLdr1 = sql1.ExecuteReader()
-            SQLdr1.Read()
-            Dim Islands = SafeStr(SQLdr1("Islands"))
-            SQLdr1.Close()
+                kml.WriteLine($"<Placemark><name>{refno}</name><styleUrl>#iota</styleUrl><visibility>0</visibility>")
 
-            Dim comment As String =
-            If(IsDBNullorEmpty(SQLdr("comment")), "", $"{SQLdr("comment")}{vbCrLf}{vbCrLf}")
+                ' Islands list
+                sql1.CommandText = $"SELECT GROUP_CONCAT(name||(iif(comment != '',' ('||comment||')','')),', ') AS Islands FROM IOTA_Islands WHERE refno='{refno}'"
+                SQLdr1 = sql1.ExecuteReader()
+                SQLdr1.Read()
+                Dim Islands = SafeStr(SQLdr1("Islands"))
+                SQLdr1.Close()
 
-            kml.WriteLine($"<description>{KMLescape(comment)}{KMLescape(Islands)}</description>")
+                Dim comment As String =
+                If(IsDBNullorEmpty(SQLdr("comment")), "", $"{SQLdr("comment")}{vbCrLf}{vbCrLf}")
 
-            Dim polys As New List(Of Polygon)
+                kml.WriteLine($"<description>{KMLescape(comment)}{KMLescape(Islands)}</description>")
 
-            ' Bounding box
-            Dim LonMin = SafeDbl(SQLdr("longitude_min"))
-            Dim LatMin = SafeDbl(SQLdr("latitude_min"))
-            Dim LonMax = SafeDbl(SQLdr("longitude_max"))
-            Dim LatMax = SafeDbl(SQLdr("latitude_max"))
+                Dim polys As New List(Of Polygon)
 
-            If LonMin < LonMax Then
-                ' Normal (no AM crossing)
-                Dim coords = {
-                New Coordinate(LonMin, LatMax),   ' top-left
-                New Coordinate(LonMin, LatMin),   ' bottom-left
-                New Coordinate(LonMax, LatMin),   ' bottom-right
-                New Coordinate(LonMax, LatMax),   ' top-right
-                New Coordinate(LonMin, LatMax)    ' close
-            }
-                polys.Add(factory.CreatePolygon(coords))
-            Else
-                ' Crosses anti‑meridian: split into west and east parts
+                ' Bounding box
+                Dim LonMin = SafeDbl(SQLdr("longitude_min"))
+                Dim LatMin = SafeDbl(SQLdr("latitude_min"))
+                Dim LonMax = SafeDbl(SQLdr("longitude_max"))
+                Dim LatMax = SafeDbl(SQLdr("latitude_max"))
 
-                ' West part: LonMin → 180
-                Dim westCoords = {
-                New Coordinate(LonMin, LatMax),
-                New Coordinate(LonMin, LatMin),
-                New Coordinate(179.9999, LatMin),
-                New Coordinate(179.9999, LatMax),
-                New Coordinate(LonMin, LatMax)
-            }
-                Dim w = factory.CreatePolygon(westCoords)
-                If Not w.IsEmpty Then polys.Add(w)
+                If LonMin < LonMax Then
+                    ' Normal (no AM crossing)
+                    Dim coords = {
+                    New Coordinate(LonMin, LatMax),   ' top-left
+                    New Coordinate(LonMin, LatMin),   ' bottom-left
+                    New Coordinate(LonMax, LatMin),   ' bottom-right
+                    New Coordinate(LonMax, LatMax),   ' top-right
+                    New Coordinate(LonMin, LatMax)    ' close
+                }
+                    polys.Add(factory.CreatePolygon(coords))
+                Else
+                    ' Crosses anti‑meridian: split into west and east parts
 
-                ' East part: -180 → LonMax
-                Dim eastCoords = {
-                New Coordinate(-179.9999, LatMax),
-                New Coordinate(-179.9999, LatMin),
-                New Coordinate(LonMax, LatMin),
-                New Coordinate(LonMax, LatMax),
-                New Coordinate(-179.9999, LatMax)
-            }
-                Dim e = factory.CreatePolygon(eastCoords)
-                If Not e.IsEmpty Then polys.Add(e)
-            End If
+                    ' West part: LonMin → 180
+                    Dim westCoords = {
+                    New Coordinate(LonMin, LatMax),
+                    New Coordinate(LonMin, LatMin),
+                    New Coordinate(179.9999, LatMin),
+                    New Coordinate(179.9999, LatMax),
+                    New Coordinate(LonMin, LatMax)
+                }
+                    Dim w = factory.CreatePolygon(westCoords)
+                    If Not w.IsEmpty Then polys.Add(w)
 
-            ' Label point: use centroid of first polygon
-            Dim labelCoord As Coordinate = polys(0).Centroid.Coordinate
-            Dim labelPoint As Point = factory.CreatePoint(labelCoord)
+                    ' East part: -180 → LonMax
+                    Dim eastCoords = {
+                    New Coordinate(-179.9999, LatMax),
+                    New Coordinate(-179.9999, LatMin),
+                    New Coordinate(LonMax, LatMin),
+                    New Coordinate(LonMax, LatMax),
+                    New Coordinate(-179.9999, LatMax)
+                }
+                    Dim e = factory.CreatePolygon(eastCoords)
+                    If Not e.IsEmpty Then polys.Add(e)
+                End If
 
-            kml.WriteLine("<MultiGeometry>")
+                ' Label point: use centroid of first polygon
+                Dim labelCoord As Coordinate = polys(0).Centroid.Coordinate
+                Dim labelPoint As Point = factory.CreatePoint(labelCoord)
 
-            ' Label point
-            WriteKmlPoint(labelPoint, kml, 1)
+                kml.WriteLine("<MultiGeometry>")
 
-            ' Polygons
-            For Each poly In polys
-                WriteKmlPolygon(poly, kml, 2)
-            Next
+                ' Label point
+                WriteKmlPoint(labelPoint, kml, 1)
 
-            kml.WriteLine("</MultiGeometry>")
-            kml.WriteLine("</Placemark>")
+                ' Polygons
+                For Each poly In polys
+                    WriteKmlPolygon(poly, kml, 2)
+                Next
 
-        End While
-        SQLdr.Close()
+                kml.WriteLine("</MultiGeometry>")
+                kml.WriteLine("</Placemark>")
 
+            End While
+            SQLdr.Close()
+        End Using
         kml.WriteLine("</Folder>")
         timer.Stop()
         AppendText(Form1.TextBox1, $"IOTA folder created with {count} island groups [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")
 
     End Sub
 
-    Public Sub ZoneFolder(connect As SqliteConnection, kml As StreamWriter)
+    Public Sub ZoneFolder(kml As StreamWriter)
         ' make a folder for CQ & ITU Zones. Use data created by Francesco Crosilla IV3TMM (SK)
-        Dim sql As SqliteCommand, timer As New Stopwatch
+        Dim timer As New Stopwatch
 
         timer.Start()
         AppendText(Form1.TextBox1, "Making KML for CQ/ITU folders.")
         Application.DoEvents()
-        sql = connect.CreateCommand
-        ' Create CQ zones
-        CreateZoneKML(connect, kml, "CQ")
 
+        ' Create CQ zones
+        CreateZoneKML(kml, "CQ")
         'Now do ITU zones
-        CreateZoneKML(connect, kml, "ITU")
+        CreateZoneKML(kml, "ITU")
         timer.Stop()
         AppendText(Form1.TextBox1, $" [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")
     End Sub
-    Sub CreateZoneKML(connect As SqliteConnection, kml As StreamWriter, zone As String)
+    Sub CreateZoneKML(kml As StreamWriter, zone As String)
         Dim description As String
-        Dim sql As SqliteCommand = connect.CreateCommand()
-        Dim SQLdr As SqliteDataReader
-        Dim factory As GeometryFactory = NtsGeometryServices.Instance.CreateGeometryFactory(4326)
+        Using connect As New SqliteConnection(DXCC_DATA)
+            connect.Open()
+            Dim sql As SqliteCommand = connect.CreateCommand()
+            Dim SQLdr As SqliteDataReader
+            Dim factory As GeometryFactory = NtsGeometryServices.Instance.CreateGeometryFactory(4326)
 
-        ' Folder header
-        kml.WriteLine($"<Folder><name>{zone} Zones</name><visibility>0</visibility><open>0</open>")
+            ' Folder header
+            kml.WriteLine($"<Folder><name>{zone} Zones</name><visibility>0</visibility><open>0</open>")
 
-        Select Case zone
-            Case "CQ"
-                ' add styles for lines
-                description = "Lines describing {zone} Zones. Based on data extracted from WAZ (@ IV3TMM) v1.2.kml (deleted)"
-                kml.WriteLine($"<Style id='style'><LabelStyle><color>ff0000ff</color><scale>6</scale></LabelStyle><IconStyle><Icon></Icon></IconStyle><LineStyle><color>ff0000ff</color><width>5</width></LineStyle></Style>")
-            Case "ITU"
-                description = "Lines describing {zone} Zones. Based on data extracted from ITU (@ IV3TMM) v1.1.kml (deleted)"
-                ' add styles for lines
-                kml.WriteLine($"<Style id='style'><LabelStyle><color>ffff00ff</color><scale>6</scale></LabelStyle><IconStyle><Icon></Icon></IconStyle><LineStyle><color>ffff00ff</color><width>5</width></LineStyle></Style>")
-            Case Else
-                Throw New System.Exception("zone type was not CQ or ITU")
-        End Select
-        kml.WriteLine($"<description>{description}</description>")
+            Select Case zone
+                Case "CQ"
+                    ' add styles for lines
+                    description = "Lines describing {zone} Zones. Based on data extracted from WAZ (@ IV3TMM) v1.2.kml (deleted)"
+                    kml.WriteLine($"<Style id='style'><LabelStyle><color>ff0000ff</color><scale>6</scale></LabelStyle><IconStyle><Icon></Icon></IconStyle><LineStyle><color>ff0000ff</color><width>5</width></LineStyle></Style>")
+                Case "ITU"
+                    description = "Lines describing {zone} Zones. Based on data extracted from ITU (@ IV3TMM) v1.1.kml (deleted)"
+                    ' add styles for lines
+                    kml.WriteLine($"<Style id='style'><LabelStyle><color>ffff00ff</color><scale>6</scale></LabelStyle><IconStyle><Icon></Icon></IconStyle><LineStyle><color>ffff00ff</color><width>5</width></LineStyle></Style>")
+                Case Else
+                    Throw New System.Exception("zone type was not CQ or ITU")
+            End Select
+            kml.WriteLine($"<description>{description}</description>")
 
-        ' Load zone lines
-        sql.CommandText = $"SELECT * FROM ZoneLines WHERE Type='{zone}' ORDER BY zone"
-        SQLdr = sql.ExecuteReader()
+            ' Load zone lines
+            sql.CommandText = $"SELECT * FROM ZoneLines WHERE Type='{zone}' ORDER BY zone"
+            SQLdr = sql.ExecuteReader()
 
-        kml.WriteLine($"<Folder><name>{zone} zone lines</name>")
-        While SQLdr.Read()
-            Dim zoneNum = SafeStr(SQLdr("zone"))
-            kml.WriteLine($"<Placemark><visibility>0</visibility><styleUrl>#style</styleUrl><name>Line {zoneNum}</name>")
-            GeoJsonToKML(SQLdr("geometry"), kml)    ' Display zone lines
-            kml.WriteLine("</Placemark>")
-        End While
-        SQLdr.Close()
-        kml.WriteLine("</Folder>")
+            kml.WriteLine($"<Folder><name>{zone} zone lines</name>")
+            While SQLdr.Read()
+                Dim zoneNum = SafeStr(SQLdr("zone"))
+                kml.WriteLine($"<Placemark><visibility>0</visibility><styleUrl>#style</styleUrl><name>Line {zoneNum}</name>")
+                GeoJsonToKML(SQLdr("geometry"), kml)    ' Display zone lines
+                kml.WriteLine("</Placemark>")
+            End While
+            SQLdr.Close()
+            kml.WriteLine("</Folder>")
 
-        ' load zone labels
-        kml.WriteLine($"<Folder><name>{zone} zone labels</name>")
-        sql.CommandText = $"SELECT * FROM ZoneLabels WHERE Type='{zone}' ORDER BY zone"
-        SQLdr = sql.ExecuteReader()
-        While SQLdr.Read()
-            Dim zoneNum = SafeStr(SQLdr("zone"))
-            kml.WriteLine($"<Placemark><visibility>0</visibility><styleUrl>#style</styleUrl><name>{zone} {zoneNum}</name>")
-            GeoJsonToKML(SQLdr("geometry"), kml)    ' Display zone lines
-            kml.WriteLine("</Placemark>")
-        End While
-        SQLdr.Close()
-
+            ' load zone labels
+            kml.WriteLine($"<Folder><name>{zone} zone labels</name>")
+            sql.CommandText = $"SELECT * FROM ZoneLabels WHERE Type='{zone}' ORDER BY zone"
+            SQLdr = sql.ExecuteReader()
+            While SQLdr.Read()
+                Dim zoneNum = SafeStr(SQLdr("zone"))
+                kml.WriteLine($"<Placemark><visibility>0</visibility><styleUrl>#style</styleUrl><name>{zone} {zoneNum}</name>")
+                GeoJsonToKML(SQLdr("geometry"), kml)    ' Display zone lines
+                kml.WriteLine("</Placemark>")
+            End While
+            SQLdr.Close()
+        End Using
         kml.WriteLine("</Folder>")
         kml.WriteLine("</Folder>")
 
     End Sub
 
-    Public Sub TimeZoneFolder(connect As SqliteConnection, kml As StreamWriter)
+    Public Sub TimeZoneFolder(kml As StreamWriter)
 
         Dim sql As SqliteCommand, SQLdr As SqliteDataReader, timer As New Stopwatch
 
         timer.Start()
         AppendText(Form1.TextBox1, $"Making KML for Timezone folder.")
         Application.DoEvents()
+        Using connect As New SqliteConnection(DXCC_DATA)
+            connect.Open()
+            sql = connect.CreateCommand()
 
-        sql = connect.CreateCommand()
+            kml.WriteLine("<Folder><name>Timezones</name><visibility>0</visibility><open>0</open>")
+            kml.WriteLine("<description>Polygons describing timezones. Data obtained from https://www.naturalearthdata.com/</description>")
 
-        kml.WriteLine("<Folder><name>Timezones</name><visibility>0</visibility><open>0</open>")
-        kml.WriteLine("<description>Polygons describing timezones. Data obtained from https://www.naturalearthdata.com/</description>")
+            ' Style maps for 6 colours
+            For i = 1 To 6
+                kml.WriteLine($"<StyleMap id='TZ_{i}'>")
+                kml.WriteLine($"<Pair><key>normal</key><styleUrl>#{ColourMapping(i)}</styleUrl></Pair>")
+                kml.WriteLine("<Pair><key>highlight</key><styleUrl>#white</styleUrl></Pair>")
+                kml.WriteLine("</StyleMap>")
+            Next
 
-        ' Style maps for 6 colours
-        For i = 1 To 6
-            kml.WriteLine($"<StyleMap id='TZ_{i}'>")
-            kml.WriteLine($"<Pair><key>normal</key><styleUrl>#{ColourMapping(i)}</styleUrl></Pair>")
-            kml.WriteLine("<Pair><key>highlight</key><styleUrl>#white</styleUrl></Pair>")
-            kml.WriteLine("</StyleMap>")
-        Next
-
-        ' List of unique timezones
-        Dim TZlist As New List(Of (name As String, color As Integer, places As String))
-        sql.CommandText = "SELECT name,color,GROUP_CONCAT(places,', ') AS places FROM Timezones GROUP BY name"
-        SQLdr = sql.ExecuteReader()
-        While SQLdr.Read()
-            TZlist.Add((SafeStr(SQLdr("name")), CInt(SQLdr("color")), SafeStr(SQLdr("places"))))
-        End While
-        SQLdr.Close()
-
-        ' Sort numerically by name (e.g. -12, -11, …, 0, 1, …, 14)
-        TZlist.Sort(Function(x, y) CSng(x.name).CompareTo(CSng(y.name)))
-
-        ' Emit each timezone
-        For Each tz In TZlist
-
-            kml.WriteLine($"<Placemark><visibility>0</visibility><styleUrl>#TZ_{tz.color}</styleUrl><name>{tz.name}</name><description>{tz.places}</description>")
-
-            sql.CommandText = $"SELECT * FROM Timezones WHERE name='{tz.name}'"
+            ' List of unique timezones
+            Dim TZlist As New List(Of (name As String, color As Integer, places As String))
+            sql.CommandText = "SELECT name,color,GROUP_CONCAT(places,', ') AS places FROM Timezones GROUP BY name"
             SQLdr = sql.ExecuteReader()
-
             While SQLdr.Read()
-                GeoJsonToKML(SQLdr("geometry"), kml)
+                TZlist.Add((SafeStr(SQLdr("name")), CInt(SQLdr("color")), SafeStr(SQLdr("places"))))
             End While
             SQLdr.Close()
-            kml.WriteLine("</Placemark>")
 
-        Next
+            ' Sort numerically by name (e.g. -12, -11, …, 0, 1, …, 14)
+            TZlist.Sort(Function(x, y) CSng(x.name).CompareTo(CSng(y.name)))
 
+            ' Emit each timezone
+            For Each tz In TZlist
+
+                kml.WriteLine($"<Placemark><visibility>0</visibility><styleUrl>#TZ_{tz.color}</styleUrl><name>{tz.name}</name><description>{tz.places}</description>")
+
+                sql.CommandText = $"SELECT * FROM Timezones WHERE name='{tz.name}'"
+                SQLdr = sql.ExecuteReader()
+
+                While SQLdr.Read()
+                    GeoJsonToKML(SQLdr("geometry"), kml)
+                End While
+                SQLdr.Close()
+                kml.WriteLine("</Placemark>")
+
+            Next
+        End Using
         kml.WriteLine("</Folder>")
         AppendText(Form1.TextBox1, $" [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")
 
     End Sub
 
 
-    Sub IARUFolder(connect As SqliteConnection, kml As StreamWriter)
+    Sub IARUFolder(kml As StreamWriter)
 
         Dim sql As SqliteCommand, SQLdr As SqliteDataReader, timer As New Stopwatch
 
@@ -866,38 +1361,39 @@ Module KMLExport
         kml.WriteLine("<Folder><name>IARU regions</name><visibility>0</visibility><open>0</open>")
         kml.WriteLine("<Style id=""IARU""><LineStyle><color>ffffffff</color><width>3</width></LineStyle><LabelStyle><color>ffffffff</color><scale>15</scale></LabelStyle><IconStyle><Icon></Icon></IconStyle></Style>")
         kml.WriteLine("<description>Lines defining IARU boundaries. Data provided by Tim Makins (EI8IC)</description>")
+        Using connect As New SqliteConnection(DXCC_DATA)
+            connect.Open()
+            sql = connect.CreateCommand()
 
-        sql = connect.CreateCommand()
+            ' ----------------------------
+            ' 1. Boundary lines
+            ' ----------------------------
+            kml.WriteLine("<Folder><name>Boundaries</name><visibility>0</visibility>")
+            sql.CommandText = "SELECT * FROM IARU"
+            SQLdr = sql.ExecuteReader()
 
-        ' ----------------------------
-        ' 1. Boundary lines
-        ' ----------------------------
-        kml.WriteLine("<Folder><name>Boundaries</name><visibility>0</visibility>")
-        sql.CommandText = "SELECT * FROM IARU"
-        SQLdr = sql.ExecuteReader()
+            While SQLdr.Read()
 
-        While SQLdr.Read()
+                Dim geoJson As String = SafeStr(SQLdr("geometry"))
+                Dim ntsGeom As Geometry = FromGeoJsonToNTS(geoJson)
 
-            Dim geoJson As String = SafeStr(SQLdr("geometry"))
-            Dim ntsGeom As Geometry = FromGeoJsonToNTS(geoJson)
+                ' Expecting LineString or MultiLineString
+                kml.WriteLine($"<Placemark><name>Line {SQLdr("line")}</name><visibility>0</visibility><styleUrl>#IARU</styleUrl>")
 
-            ' Expecting LineString or MultiLineString
-            kml.WriteLine($"<Placemark><name>Line {SQLdr("line")}</name><visibility>0</visibility><styleUrl>#IARU</styleUrl>")
+                If TypeOf ntsGeom Is LineString Then
+                    KMLLineString(kml, DirectCast(ntsGeom, LineString), 1)
 
-            If TypeOf ntsGeom Is LineString Then
-                KMLLineString(kml, DirectCast(ntsGeom, LineString), 1)
+                ElseIf TypeOf ntsGeom Is MultiLineString Then
+                    Dim mls = DirectCast(ntsGeom, MultiLineString)
+                    For i = 0 To mls.NumGeometries - 1
+                        KMLLineString(kml, DirectCast(mls.GetGeometryN(i), LineString), 1)
+                    Next
+                End If
 
-            ElseIf TypeOf ntsGeom Is MultiLineString Then
-                Dim mls = DirectCast(ntsGeom, MultiLineString)
-                For i = 0 To mls.NumGeometries - 1
-                    KMLLineString(kml, DirectCast(mls.GetGeometryN(i), LineString), 1)
-                Next
-            End If
-
-            kml.WriteLine("</Placemark>")
-        End While
-        SQLdr.Close()
-
+                kml.WriteLine("</Placemark>")
+            End While
+            SQLdr.Close()
+        End Using
         kml.WriteLine("</Folder>")
 
         ' ----------------------------
@@ -927,7 +1423,7 @@ Module KMLExport
 
     End Sub
 
-    Sub AntarcticFolder(connect As SqliteConnection, kml As StreamWriter)
+    Sub AntarcticFolder(kml As StreamWriter)
 
         Dim sql As SqliteCommand, SQLdr As SqliteDataReader, timer As New Stopwatch
 
@@ -940,40 +1436,41 @@ Module KMLExport
         kml.WriteLine("<description>Details of all active Antarctic bases. Data harvested from https://www.coolantarctica.com/Community/antarctic_bases.php</description>")
         kml.WriteLine("<visibility>0</visibility>")
         kml.WriteLine("<Style id=""antarctic""><LabelStyle><color>ffff7f7f</color></LabelStyle><IconStyle><Icon><href>https://maps.google.com/mapfiles/kml/paddle/blu-blank.png</href></Icon><scale>3</scale></IconStyle></Style>")
+        Using connect As New SqliteConnection(DXCC_DATA)
+            connect.Open()
+            sql = connect.CreateCommand()
+            sql.CommandText = "SELECT * FROM Antarctic ORDER BY name"
+            SQLdr = sql.ExecuteReader()
 
-        sql = connect.CreateCommand()
-        sql.CommandText = "SELECT * FROM Antarctic ORDER BY name"
-        SQLdr = sql.ExecuteReader()
+            While SQLdr.Read()
 
-        While SQLdr.Read()
+                Dim name = KMLescape(SQLdr("name"))
+                Dim geoJson = SafeStr(SQLdr("coordinates"))
 
-            Dim name = KMLescape(SQLdr("name"))
-            Dim geoJson = SafeStr(SQLdr("coordinates"))
+                ' Parse GeoJSON → NTS Point
+                Dim ntsGeom As Geometry = FromGeoJsonToNTS(geoJson)
+                Dim pt As Point = DirectCast(ntsGeom, Point)
 
-            ' Parse GeoJSON → NTS Point
-            Dim ntsGeom As Geometry = FromGeoJsonToNTS(geoJson)
-            Dim pt As Point = DirectCast(ntsGeom, Point)
+                kml.WriteLine($"<Placemark><name>{name}</name><visibility>0</visibility><styleUrl>#antarctic</styleUrl>")
 
-            kml.WriteLine($"<Placemark><name>{name}</name><visibility>0</visibility><styleUrl>#antarctic</styleUrl>")
+                ' Write point
+                WriteKmlPoint(pt, kml, 2)
 
-            ' Write point
-            WriteKmlPoint(pt, kml, 2)
+                ' Extended data
+                kml.WriteLine("<ExtendedData>")
+                kml.WriteLine($"<Data name=""name""><value>{name}</value></Data>")
+                kml.WriteLine($"<Data name=""nation""><value>{KMLescape(SQLdr("nation"))}</value></Data>")
+                kml.WriteLine($"<Data name=""lat""><value>{pt.Coordinate.Y:f3}</value></Data>")
+                kml.WriteLine($"<Data name=""lon""><value>{pt.Coordinate.X:f3}</value></Data>")
+                kml.WriteLine($"<Data name=""situation""><value>{KMLescape(SQLdr("situation"))}</value></Data>")
+                kml.WriteLine($"<Data name=""altitude""><value>{SQLdr("altitude")}</value></Data>")
+                kml.WriteLine($"<Data name=""open""><value>{KMLescape(SQLdr("open"))}</value></Data>")
+                kml.WriteLine("</ExtendedData>")
 
-            ' Extended data
-            kml.WriteLine("<ExtendedData>")
-            kml.WriteLine($"<Data name=""name""><value>{name}</value></Data>")
-            kml.WriteLine($"<Data name=""nation""><value>{KMLescape(SQLdr("nation"))}</value></Data>")
-            kml.WriteLine($"<Data name=""lat""><value>{pt.Coordinate.Y:f3}</value></Data>")
-            kml.WriteLine($"<Data name=""lon""><value>{pt.Coordinate.X:f3}</value></Data>")
-            kml.WriteLine($"<Data name=""situation""><value>{KMLescape(SQLdr("situation"))}</value></Data>")
-            kml.WriteLine($"<Data name=""altitude""><value>{SQLdr("altitude")}</value></Data>")
-            kml.WriteLine($"<Data name=""open""><value>{KMLescape(SQLdr("open"))}</value></Data>")
-            kml.WriteLine("</ExtendedData>")
-
-            kml.WriteLine("</Placemark>")
-        End While
-        SQLdr.Close()
-
+                kml.WriteLine("</Placemark>")
+            End While
+            SQLdr.Close()
+        End Using
         kml.WriteLine("</Folder>")
         AppendText(Form1.TextBox1, $" [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")
 
@@ -1342,5 +1839,38 @@ Module KMLExport
         Return 6
 
     End Function
+    Public Function CreateDocument() As KmlDocument
+        Return New KmlDocument()
+    End Function
 
+    Public Function CreatePlacemark(name As String,
+                                    geom As Geometry,
+                                    Optional styleUrl As String = Nothing,
+                                    Optional desc As String = Nothing) As KmlPlacemark
+
+        Return New KmlPlacemark With {
+        .Name = name,
+        .Geometry = geom,
+        .StyleUrl = styleUrl,
+        .Description = desc
+    }
+    End Function
+
+    Public Sub WriteDocument(doc As KmlDocument, path As String)
+        doc.WriteToFile(path)
+    End Sub
+
+    Public Sub WriteGeometryToFile(geom As Geometry,
+                               path As String,
+                               Optional name As String = "Geometry",
+                               Optional styleUrl As String = Nothing)
+
+        Dim doc = New KmlDocument()
+        doc.AddPlacemark(New KmlPlacemark With {
+        .Name = name,
+        .Geometry = geom,
+        .StyleUrl = styleUrl
+    })
+        doc.WriteToFile(path)
+    End Sub
 End Module

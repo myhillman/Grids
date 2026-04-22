@@ -69,6 +69,7 @@ Public Module NaturalEarth
     Private Const NE_REGIONPOLYS As String = "D:\GIS DATA\Natural Earth\RegionPolys\ne_10m_geography_regions_polys.json"
     Private Const NE_STATESPROVINCES As String = "D:\GIS DATA\Natural Earth\StatesProvinces\ne_10m_admin_1_states_provinces.json"
     Private Const NE_MINORISLANDS As String = "D:\GIS DATA\Natural Earth\MinorIslands\ne_10m_admin_0_scale_rank_minor_islands.json"
+
     Private Async Function EnsureLoadedAsync() As Task
         If _loaded Then Return
 
@@ -80,7 +81,7 @@ Public Module NaturalEarth
         ' the features collection is first in best dressed, so add the smaller geometries first and work way up
 
         ' Load region polys
-        'Await LoadGeoJsonAsync(NE_REGIONPOLYS)
+        Await LoadGeoJsonAsync(NE_REGIONPOLYS)
 
         ' Load subunits
         Await LoadGeoJsonAsync(NE_SUBUNITS)
@@ -281,6 +282,9 @@ Public Module NaturalEarth
 
         ' 4. NAME
         Dim name = TryGet(attrs, "NAME")
+        If Not String.IsNullOrEmpty(name) Then Return name
+        ' Physical data uses lowercase
+        name = TryGet(attrs, "name")
         If Not String.IsNullOrEmpty(name) Then Return name
 
         ' 5. BRK_NAME

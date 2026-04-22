@@ -53,7 +53,7 @@ Public Class ReprocessCountry
                     ' remake KML file if geometry is OK
                     Dim kml As New StreamWriter(Path.Combine(Application.StartupPath, "KML", $"DXCC_{n.Key}.kml"), False)
                     kml.WriteLine(KMLheader)
-                    KMLlist(connect, kml, New List(Of Integer) From {n.Value})
+                    KMLlist(kml, New List(Of Integer) From {n.Value})
                     kml.WriteLine(KMLfooter)
                     kml.Close()
                 End If
