@@ -292,7 +292,7 @@ There are some additional folders which are closed by default. You must open the
             PrefixFolder(KML)
             GridSquareFolder(KML, DXCClist)
             IOTAFolder(KML)
-            ZoneFolder(KML)       ' data is lost
+            ZoneFolder(KML)
             IARUFolder(KML)
             TimeZoneFolder(KML)
             BoundingBoxFolder(KML)

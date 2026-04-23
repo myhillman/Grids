@@ -1,0 +1,5 @@
+<Project>
+  <PropertyGroup Condition="'$(DesignTimeBuild)' == 'true'">
+    <DisableImplicitNuGetAssemblyReferences>true</DisableImplicitNuGetAssemblyReferences>
+  </PropertyGroup>
+</Project>

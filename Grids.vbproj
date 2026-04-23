@@ -4,6 +4,7 @@
     <OutputType>WinExe</OutputType>
     <RootNamespace></RootNamespace>
     <TargetFramework>net8.0-windows8.0</TargetFramework>
+	<RuntimeFrameworkVersion>8.0.26</RuntimeFrameworkVersion>
     <UseWindowsForms>true</UseWindowsForms>
 	<WinFormsProjectSubtype>WindowsForms</WinFormsProjectSubtype>
 	<MyType>WindowsForms</MyType>

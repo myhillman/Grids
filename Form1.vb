@@ -4,8 +4,12 @@ Partial Public Class Form1
     Inherits System.Windows.Forms.Form
 
     Public Sub New()
+        If LicenseManager.UsageMode = LicenseUsageMode.Designtime Then
+            ' Skip runtime-only code, but DO call InitializeComponent
+            InitializeComponent()
+            Return
+        End If
         InitializeComponent()
-        If LicenseManager.UsageMode = LicenseUsageMode.Designtime Then Exit Sub
         InitHttp()
         SQLitePCL.Batteries.Init()
         InitializeOSMCache()
