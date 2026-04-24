@@ -1,10 +1,7 @@
 ﻿Imports System.Text.RegularExpressions
 Imports Esri.ArcGISRuntime.Geometry
-Imports NetTopologySuite
-Imports NetTopologySuite.Geometries
-Imports Newtonsoft.Json
-Imports Newtonsoft.Json.Linq
 Imports NetTopologySuite.Algorithm
+Imports NetTopologySuite.Geometries
 
 Module GeomLibrary
     public DebugOutput As Boolean=false
@@ -305,7 +302,7 @@ Module GeomLibrary
             Throw New ArgumentException("Latitude/longitude cannot be NaN.")
         End If
 
-        If lon < -182 OrElse lon > 182 Then
+        If lon < -180 OrElse lon > 180 Then
             Throw New ArgumentOutOfRangeException(NameOf(lon),
             $"Longitude {lon} is out of range (-180 to 180).")
         End If

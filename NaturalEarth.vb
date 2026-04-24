@@ -176,7 +176,7 @@ Public Module NaturalEarth
     ' ------------------------------------------------------------
     Private ReadOnly _byKey As New SortedDictionary(Of String, Geometry)(StringComparer.OrdinalIgnoreCase)
     Private ReadOnly _features As New List(Of NetTopologySuite.Features.Feature)
-    Private _featureLayer As New Dictionary(Of String, String)
+    Private ReadOnly _featureLayer As New Dictionary(Of String, String)
     Private ReadOnly _layerOrder As New List(Of String)
 
 
@@ -360,6 +360,40 @@ Public Module NaturalEarth
             End If
         Next
         Return sb.ToString().Trim()
+    End Function
+
+    Public Async Function FindOSMAlternatives() As Task(Of Integer)
+        ' Find NE alternatives for OSM entities
+        Await EnsureLoadedAsync()           ' load NE data if not already loaded
+        With Form1.ProgressBar1
+            .Minimum = 0
+            .Maximum = _features.Count
+            .Value = 0
+        End With
+        Using connect As New SqliteConnection(DXCC_DATA)
+            connect.Open()
+            Dim cmd = connect.CreateCommand()
+            cmd.CommandText = "SELECT * from DXCC where source<> '' and source IS NOT NULL and source<>'NE';"
+            Using reader = cmd.ExecuteReader()
+                While reader.Read()
+                    Dim name = reader("Entity")
+                    AppendText(Form1.TextBox1, "Looking for NE alternative for: " & name & vbCrLf)
+                    Dim geom = FromGeoJsonToNTS(reader("geometry"))     ' get DXCC geometry as NTS
+                    ' now search for NE geometry for ingtersection with this geometry
+                    Form1.ProgressBar1.Value = 0
+                    For Each f In _byKey
+                        Dim neGeom = f.Value
+                        If neGeom IsNot Nothing AndAlso geom.Intersects(neGeom) Then
+                            If geom.Intersection(neGeom) IsNot Nothing Then
+                                AppendText(Form1.TextBox1, $"Found NE alternative for '{name}' with NE name={f.Key}{vbCrLf}")
+                            End If
+                        End If
+                        Form1.ProgressBar1.Value += 1
+                    Next
+                End While
+            End Using
+        End Using
+        Return 1
     End Function
 
 End Module

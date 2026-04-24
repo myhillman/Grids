@@ -3,13 +3,30 @@ Imports Microsoft.Data.Sqlite
 Imports System.IO
 
 Module Reports
+    ''' <summary>
+    ''' Generates a detailed HTML report describing the geometry state of every
+    ''' DXCC entity, including ring counts, point counts, GeoJSON size, source
+    ''' rules, bounding boxes, and notes.
+    ''' </summary>
+    ''' <remarks>
+    ''' This routine iterates through all non-deleted DXCC records, converts each
+    ''' stored GeoJSON geometry into an NTS geometry, and extracts structural
+    ''' information such as total rings, outer rings, inner rings, point counts,
+    ''' and whether any rings are unclosed. It also records the byte length of the
+    ''' GeoJSON, the presence of a query rule, bounding box metadata, and any
+    ''' associated notes. Each entity is written as a row in an HTML table, with
+    ''' missing or empty geometries highlighted. A final totals row aggregates
+    ''' counts across all entities. The completed report is saved as
+    ''' "DXCC_Entity_report.html" in the application startup directory, displayed
+    ''' automatically, and progress is reflected in the UI.
+    ''' </remarks>
     Sub EntityReport()
         ' Create list of entities and state of geometry
         Dim sql As SqliteCommand, SQLdr As SqliteDataReader
         Dim ringCount As Integer, pointCount As Integer, JSONcount As Integer, lines As Integer = 0
         Dim TotalEntity As Integer = 0, TotalRings As Integer = 0, TotalPoints As Integer = 0, TotalQueries As Integer = 0, TotalJSON As Integer = 0
-        Dim TotalUnclosed As Integer = 0, TotalNotes As Integer = 0, TotalBbox As Integer = 0
-        Dim outer As Integer, inner As Integer, unclosed As Integer
+        Dim TotalNotes As Integer = 0, TotalBbox As Integer = 0
+        Dim outer As Integer, inner As Integer
 
         Dim htmlFile = Path.Combine(Application.StartupPath, "DXCC_Entity_report.html")
 
@@ -38,7 +55,7 @@ Module Reports
             html.WriteLine("<!DOCTYPE html>")
             html.WriteLine("<style> table td:nth-child(2), td:nth-child(3), td:nth-child(4),td:nth-child(5),td:nth-child(6) {text-align:right;} .red td{color:red;font-weight: bold;}</style>")
             html.WriteLine("<table border=1>")
-            html.WriteLine("<tr><th>Entity</th><th>Rings</th><th>Outer</th><th>Inner</th><th>Points</th><th>Unclosed</th><th>JSON</th><th>OSM Overpass QL</th><th>bbox</th><th>Notes</th></tr>")
+            html.WriteLine("<tr><th>Entity</th><th>Rings</th><th>Outer</th><th>Inner</th><th>Points</th><th>GeoJson</th><th>Rule</th><th>bbox</th><th>Notes</th></tr>")
 
             While SQLdr.Read
                 Form1.ProgressBar1.Value += 1
@@ -48,9 +65,8 @@ Module Reports
                 JSONcount = 0
                 outer = 0
                 inner = 0
-                unclosed = 0
 
-                If Not IsDBNullorEmpty(SQLdr("query")) Then TotalQueries += 1
+                If Not IsDBNullorEmpty(SQLdr("rule")) Then TotalQueries += 1
 
                 Dim cls = " class=red"
 
@@ -67,16 +83,14 @@ Module Reports
 
                     ' Handle Polygon or MultiPolygon
                     If TypeOf geom Is Polygon Then
-                        ProcessPolygon(DirectCast(geom, Polygon), ringCount, pointCount, outer, inner, unclosed)
+                        ProcessPolygon(DirectCast(geom, Polygon), ringCount, pointCount, outer, inner)
 
                     ElseIf TypeOf geom Is MultiPolygon Then
                         Dim mp = DirectCast(geom, MultiPolygon)
                         For i = 0 To mp.NumGeometries - 1
-                            ProcessPolygon(DirectCast(mp.GetGeometryN(i), Polygon), ringCount, pointCount, outer, inner, unclosed)
+                            ProcessPolygon(DirectCast(mp.GetGeometryN(i), Polygon), ringCount, pointCount, outer, inner)
                         Next
                     End If
-
-                    TotalUnclosed += unclosed
                 End If
 
                 TotalEntity += 1
@@ -108,8 +122,8 @@ Module Reports
                 html.WriteLine(
                 $"<tr{cls}><td>{Strings.Replace(SQLdr("Entity"), " ", "&nbsp;")}</td>" &
                 $"<td>{ringCount:n0}</td><td>{outer}</td><td>{inner}</td>" &
-                $"<td>{pointCount:n0}</td><td>{unclosed}</td><td>{JSONcount:n0}</td>" &
-                $"<td>{SQLdr("query")}</td><td>{bbox}</td><td>{notes}</td></tr>"
+                $"<td>{pointCount:n0}</td><td>{JSONcount:n0}</td>" &
+                $"<td>{SQLdr("source")}: {SQLdr("rule")}</td><td>{bbox}</td><td>{notes}</td></tr>"
             )
 
                 lines += 1
@@ -120,7 +134,7 @@ Module Reports
             ' ------------------------------
             html.WriteLine(
             $"<tr><td>{TotalEntity}</td><td>{TotalRings:n0}</td><td></td><td></td>" &
-            $"<td>{TotalPoints:n0}</td><td>{TotalUnclosed:n0}</td><td>{TotalJSON:n0}</td>" &
+            $"<td>{TotalPoints:n0}</td><td>{TotalJSON:n0}</td>" &
             $"<td>{TotalQueries}</td><td>{TotalBbox}</td><td>{TotalNotes}</td></tr>"
         )
 
@@ -134,8 +148,7 @@ Module Reports
                                ByRef ringCount As Integer,
                                ByRef pointCount As Integer,
                                ByRef outer As Integer,
-                               ByRef inner As Integer,
-                               ByRef unclosed As Integer)
+                               ByRef inner As Integer)
 
         ' ------------------------------
         ' Outer ring (shell)
@@ -144,7 +157,6 @@ Module Reports
         ringCount += 1
         outer += 1
         pointCount += shell.NumPoints
-        If Not shell.IsClosed Then unclosed += 1
 
         ' ------------------------------
         ' Inner rings (holes)
@@ -154,14 +166,27 @@ Module Reports
             ringCount += 1
             inner += 1
             pointCount += hole.NumPoints
-            If Not hole.IsClosed Then unclosed += 1
         Next
     End Sub
+    ''' <summary>
+    ''' Generates an HTML report summarizing DXCC geometry complexity in terms of
+    ''' outer rings, inner rings, total rings, and serialized geometry size.
+    ''' </summary>
+    ''' <remarks>
+    ''' This routine reads all non-deleted DXCC geometries from the database,
+    ''' converts each GeoJSON geometry into an NTS geometry, and counts the number
+    ''' of outer (shell) rings and inner (hole) rings. For each entity, the method
+    ''' writes an HTML table row containing the entity name, ring counts, geometry
+    ''' byte size, and percentage of total geometry size. A final totals row
+    ''' aggregates outer rings, inner rings, total rings, and total serialized size.
+    ''' The generated report is saved as "Geometry Size.html" in the application
+    ''' startup directory, displayed automatically, and progress is reflected in the UI.
+    ''' </remarks>
 
     Sub GeometrySizeTable()
         Dim sql As SqliteCommand, SQLdr As SqliteDataReader
-        Dim ringCount As Integer, lines As Integer = 0
-        Dim TotalEntity As Integer = 0, TotalRings As Integer = 0, TotalSize As Integer = 0
+        Dim outerCount As Integer, innerCount As Integer, lines As Integer = 0
+        Dim TotalEntity As Integer = 0, TotalOuter As Integer = 0, TotalInner As Integer = 0, TotalSize As Integer = 0
 
         Dim htmlFile = Path.Combine(Application.StartupPath, "Geometry Size.html")
 
@@ -199,9 +224,9 @@ Module Reports
             ' Main query
             ' ---------------------------------------------------------
             sql.CommandText =
-            "select *, LENGTH(geometry) AS size " &
-            "from DXCC where Deleted=0 and DXCCnum != 999 " &
-            "order by size DESC"
+        "select *, LENGTH(geometry) AS size " &
+        "from DXCC where Deleted=0 and DXCCnum != 999 " &
+        "order by size DESC"
 
             SQLdr = sql.ExecuteReader
 
@@ -210,34 +235,35 @@ Module Reports
             ' ---------------------------------------------------------
             html.WriteLine("<!DOCTYPE html>")
             html.WriteLine("
-            <style>
-                table {
-                    border-collapse: collapse;
-                    border: 1px solid #444;
-                }
-                table th, table td {
-                    border: 1px solid #444;
-                    padding: 4px 6px;
-                }
-                table td:nth-child(2),
-                table td:nth-child(3),
-                table td:nth-child(4),
-                table td:nth-child(5),
-                table td:nth-child(6) {
-                    text-align: right;
-                }
-                table thead th {
-                    background-color: #f0f0f0;
-                    font-weight: bold;
-                }
-                .red td {
-                    color: red;
-                    font-weight: bold;
-                }
-            </style>")
+        <style>
+            table {
+                border-collapse: collapse;
+                border: 1px solid #444;
+            }
+            table th, table td {
+                border: 1px solid #444;
+                padding: 4px 6px;
+            }
+            table td:nth-child(2),
+            table td:nth-child(3),
+            table td:nth-child(4),
+            table td:nth-child(5),
+            table td:nth-child(6),
+            table td:nth-child(7) {
+                text-align: right;
+            }
+            table thead th {
+                background-color: #f0f0f0;
+                font-weight: bold;
+            }
+            .red td {
+                color: red;
+                font-weight: bold;
+            }
+        </style>")
 
             html.WriteLine("<table>")
-            html.WriteLine("<tr><th>Entity</th><th>Rings</th><th>Geometry Size</th><th>Percent</th></tr>")
+            html.WriteLine("<tr><th>Entity</th><th>Outer</th><th>Inner</th><th>Total Rings</th><th>Geometry Size</th><th>Percent</th></tr>")
 
             ' ---------------------------------------------------------
             ' Process each DXCC row
@@ -250,24 +276,23 @@ Module Reports
                 Dim geometryJson = SafeStr(SQLdr("geometry"))
                 Dim size = SafeInt(SQLdr("size"))
 
-                ' ------------------------------
-                ' Count rings using NTS
-                ' ------------------------------
-                If IsDBNullorEmpty(geometryJson) Then
-                    ringCount = 0
-                Else
+                outerCount = 0
+                innerCount = 0
+
+                If Not IsDBNullorEmpty(geometryJson) Then
                     Dim geom As Geometry = FromGeoJsonToNTS(geometryJson)
-                    ringCount = CountRings(geom)
-                    TotalRings += ringCount
+                    CountOuterInnerRings(geom, outerCount, innerCount)
                 End If
 
-                ' ------------------------------
-                ' Write row
-                ' ------------------------------
+                TotalOuter += outerCount
+                TotalInner += innerCount
+
                 html.WriteLine(
-                $"<tr><td>{Strings.Replace(Entity, " ", "&nbsp;")}</td>" &
-                $"<td>{ringCount:n0}</td><td>{size}</td>" &
-                $"<td>{If(TotalSize > 0, size / TotalSize * 100, 0):f1}</td></tr>"
+            $"<tr><td>{Strings.Replace(Entity, " ", "&nbsp;")}</td>" &
+            $"<td>{outerCount:n0}</td><td>{innerCount:n0}</td>" &
+            $"<td>{outerCount + innerCount:n0}</td>" &
+            $"<td>{size:n0}</td>" &
+            $"<td>{If(TotalSize > 0, size / TotalSize * 100, 0):f1}</td></tr>"
             )
 
                 lines += 1
@@ -277,8 +302,10 @@ Module Reports
             ' Totals row
             ' ---------------------------------------------------------
             html.WriteLine(
-            $"<tr><td>{TotalEntity}</td><td>{TotalRings:n0}</td>" &
-            $"<td>{TotalSize:n0}</td><td></td></tr>"
+        $"<tr><td>{TotalEntity}</td>" &
+        $"<td>{TotalOuter:n0}</td><td>{TotalInner:n0}</td>" &
+        $"<td>{(TotalOuter + TotalInner):n0}</td>" &
+        $"<td>{TotalSize:n0}</td><td></td></tr>"
         )
 
             html.WriteLine("</table>")
@@ -287,37 +314,49 @@ Module Reports
             OpenHtml(htmlFile)
         End Using
     End Sub
-    Private Function CountRings(g As Geometry) As Integer
-        If g Is Nothing OrElse g.IsEmpty Then Return 0
 
-        Dim count As Integer = 0
+
+    Private Sub CountOuterInnerRings(g As Geometry, ByRef outer As Integer, ByRef inner As Integer)
+        If g Is Nothing OrElse g.IsEmpty Then Exit Sub
 
         If TypeOf g Is Polygon Then
             Dim poly = DirectCast(g, Polygon)
-            count += 1 + poly.NumInteriorRings   ' shell + holes
+            outer += 1
+            inner += poly.NumInteriorRings
 
         ElseIf TypeOf g Is MultiPolygon Then
             Dim mp = DirectCast(g, MultiPolygon)
             For i = 0 To mp.NumGeometries - 1
                 Dim poly = DirectCast(mp.GetGeometryN(i), Polygon)
-                count += 1 + poly.NumInteriorRings
+                outer += 1
+                inner += poly.NumInteriorRings
             Next
         End If
+    End Sub
 
-        Return count
-    End Function
+    ''' <summary>
+    ''' Generates an HTML report summarizing the structure and size of the DXCC KML file.
+    ''' </summary>
+    ''' <remarks>
+    ''' This routine loads the main KML document, enumerates all top-level folders, and
+    ''' collects counts of subfolders, placemarks, polygons, LineStrings, and Points.
+    ''' For each folder, the method writes a row to an HTML table including the folder
+    ''' name, geometry counts, and the serialized XML size in bytes. A final summary row
+    ''' aggregates totals across all folders. The resulting HTML file is written to the
+    ''' application startup directory as "KML File Size.html", displayed automatically,
+    ''' and a status line is appended to the UI log.
+    ''' </remarks>
 
     Sub KMLFileSize()
-        ' Create summary of KML file sizes
         Dim lines As Integer = 0, TotalFolders As Integer = 0, FolderSize As Integer = 0, TotalSubFolders As Integer = 0, TotalPlacemarks As Integer = 0
-        Dim TotalPolygons As Integer = 0, TotalLineStrings As Integer = 0
+        Dim TotalPolygons As Integer = 0, TotalLineStrings As Integer = 0, TotalPoints As Integer = 0
 
         Dim htmlFile = Path.Combine(Application.StartupPath, "KML File Size.html")
         Using html As New StreamWriter(htmlFile, False)
             html.WriteLine("<!DOCTYPE html>")
-            html.WriteLine("<style> table td:nth-child(2), td:nth-child(3), td:nth-child(4),td:nth-child(5),td:nth-child(6) {text-align:right;} .red td{color:red;font-weight: bold;}</style>")
+            html.WriteLine("<style> table td:nth-child(2), td:nth-child(3), td:nth-child(4),td:nth-child(5),td:nth-child(6),td:nth-child(7) {text-align:right;} .red td{color:red;font-weight: bold;}</style>")
             html.WriteLine("<table border=1>")
-            html.WriteLine("<tr><th>Folder</th><th>Sub-folders</th><th>Placemarks</th><th>Polygons</th><th>LineStrings</th><th>Size</th></tr>")
+            html.WriteLine("<tr><th>Folder</th><th>Sub-folders</th><th>Placemarks</th><th>Polygons</th><th>LineStrings</th><th>Points</th><th>Size (b)</th></tr>")
             Dim doc = XDocument.Load($"{Application.StartupPath}\KML\DXCC Map of the World.kml")    ' read the XML
             Dim ns = doc.Root.Name.Namespace      ' get namespace name so we can qualify everything
             Dim document = doc.Root.Element(ns + "Document")        ' root of kml
@@ -335,10 +374,12 @@ Module Reports
                 TotalPolygons += polygons
                 Dim linestrings = folder.Descendants(ns + "LineString").Count
                 TotalLineStrings += linestrings
-                html.WriteLine($"<tr><td>{name}</td><td>{subfolders:n0}</td><td>{placemarks:n0}</td><td>{polygons:n0}</td><td>{linestrings:n0}</td><td>{size:n0}</td></tr>")
+                Dim points = folder.Descendants(ns + "Point").Count
+                TotalPoints += points
+                html.WriteLine($"<tr><td>{name}</td><td>{subfolders:n0}</td><td>{placemarks:n0}</td><td>{polygons:n0}</td><td>{linestrings:n0}</td><td>{points:n0}</td><td>{size:n0}</td></tr>")
                 lines += 1
             Next
-            html.WriteLine($"<tr><td>{TotalFolders}</td><td>{TotalSubFolders:n0}</td><td>{TotalPlacemarks:n0}</td><td>{TotalPolygons:n0}</td><td>{TotalLineStrings:n0}</td><td>{FolderSize:n0}</td></tr>")
+            html.WriteLine($"<tr><td>{TotalFolders}</td><td>{TotalSubFolders:n0}</td><td>{TotalPlacemarks:n0}</td><td>{TotalPolygons:n0}</td><td>{TotalLineStrings:n0}</td><td>{TotalPoints:n0}</td><td>{FolderSize:n0}</td></tr>")
             html.WriteLine("</table>")
             AppendText(Form1.TextBox1, $"{lines} lines written To html file{vbCrLf}")
             OpenHtml(htmlFile)

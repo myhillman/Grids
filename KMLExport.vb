@@ -50,7 +50,6 @@ Module KMLExport
 {colours}{hover()}"
 
     End Sub
-    ' prefixes for prefix folder
     Sub MakeKMLAllEntities()
 
         ' Collect all DXCC entries first (so no reader is open during KML writing)
@@ -95,65 +94,118 @@ Module KMLExport
             If dxcc IsNot Nothing AndAlso dxcc.Geometry IsNot Nothing AndAlso Not dxcc.Geometry.IsEmpty Then
 
                 ' Build KML using the new module
-                Dim doc As New KmlDocument()
-                doc.AddRawKML(colours) ' add styles to document
-                doc.AddRawKML(hover()) ' add hover styles to document
-
-                ' Construct meta description for placemark
-                Dim meta As New Dictionary(Of String, String)
-                ' Add meta data table entries
-
-                meta("Entity") = KMLescape(dxcc.Entity)
-                meta("DXCC number") = KMLescape(dxcc.DXCCnum)
-                meta("Prefix") = KMLescape(dxcc.prefix)
-                meta("CQ Zone") = KMLescape(dxcc.CQ)
-                meta("ITU Zone") = KMLescape(dxcc.ITU)
-                meta("IARU Region") = KMLescape(dxcc.IARU)
-                meta("Continent") = KMLescape(dxcc.Continent)
-                meta("Start Date") = KMLescape(dxcc.StartDate)
-                meta("lat") = KMLescape($"{dxcc.lat:f3}")
-                meta("lon") = KMLescape($"{dxcc.lon:f3}")
-
-                Dim query As New StringBuilder()
-                If Not IsDBNullorEmpty(dxcc.source) Then query.Append($"{dxcc.source}: ")
-                If Not IsDBNullorEmpty(dxcc.rule) Then query.Append(dxcc.rule)
-                If Not IsDBNullorEmpty(dxcc.bbox) Then query.Append($" ({dxcc.bbox})")
-
-                If query.Length > 0 Then
-                    meta("GIS query") = KMLescape(dxcc.query)
-                End If
-
-                If Not IsDBNullorEmpty(dxcc.notes) Then
-                    meta("Notes") = KMLescape(Hyperlink(dxcc.notes))
-                End If
-                ' Now build description from meta
-                Dim sb As New System.Text.StringBuilder()
-
-                sb.AppendLine("<![CDATA[")
-                sb.AppendLine("<table border='0' cellpadding='2' cellspacing='0'>")
-
-                For Each kv In meta
-                    sb.AppendLine($"<tr><td><b>{kv.Key}:</b></td><td>{kv.Value}</td></tr>")
-                Next
-
-                sb.AppendLine("</table>")
-                sb.AppendLine("]]>")
+                Dim kml As New KmlFile        ' create new KML file and set name
+                kml.Document.Name = $"KML for {entity}"
+                Dim doc = kml.Document
+                KMLBasicStyles(doc) ' add basic styles to document
+                KMLhover(doc)
 
                 Dim pm As New KmlPlacemark With {
-                    .Name = entity,
-                    .Geometry = dxcc.Geometry,
-                    .Description = sb.ToString,
-                    .StyleUrl = $"#boundary_{(CInt(dxcc.Colour) Mod (ColourMapping.Length - 1)) + 1}" ' assign style based on colour index
+                        .Name = entity,
+                        .StyleUrl = $"#boundary_{(CInt(dxcc.Colour) Mod (ColourMapping.Length - 1)) + 1}",      ' assign style based on colour index
+                        .CoordinateDigits = 3
                 }
+                pm.Geometry.Add(dxcc.Geometry)  ' the dxcc outline geometry
+                ' Add the extended data
+                With pm
+                    .ExtendedData("Entity") = dxcc.Entity
+                    .ExtendedData("DXCC number") = dxcc.DXCCnum
+                    .ExtendedData("Prefix") = dxcc.prefix
+                    .ExtendedData("CQ Zone") = dxcc.CQ
+                    .ExtendedData("ITU Zone") = dxcc.ITU
+                    .ExtendedData("IARU Region") = dxcc.IARU
+                    .ExtendedData("Continent") = dxcc.Continent
+                    .ExtendedData("Start Date") = dxcc.StartDate
+                    .ExtendedData("lat") = $"{dxcc.lat:f3}"
+                    .ExtendedData("lon") = $"{dxcc.lon:f3}"
 
-                doc.AddPlacemark(pm)
+                    Dim query As New StringBuilder()
+                    If Not IsDBNullorEmpty(dxcc.source) Then query.Append($"{dxcc.source}:")
+                    If Not IsDBNullorEmpty(dxcc.rule) Then query.Append(dxcc.rule)
+                    If Not IsDBNullorEmpty(dxcc.bbox) Then query.Append($" ({dxcc.bbox})")
 
+                    If query.Length > 0 Then
+                        .ExtendedData("GIS query") = query.ToString
+                    End If
+
+                    If Not IsDBNullorEmpty(dxcc.notes) Then
+                        .ExtendedData("Notes") = Hyperlink(dxcc.notes)
+                    End If
+                End With
+
+                doc.Placemarks.Add(pm)      ' add the placemark to the document
+
+                ' Create the KML (XML) file
                 Dim outPath = Path.Combine(Application.StartupPath, "KML", $"DXCC_{entity}.kml")
-                doc.WriteToFile(outPath)
+                Using xml As XmlWriter = XmlWriter.Create(outPath, New XmlWriterSettings With {.Indent = True, .Encoding = Encoding.UTF8})
+                    kml.Write(xml)
+                End Using
             End If
             Form1.ProgressBar1.Value += 1
         Next
 
+    End Sub
+    ''' <summary>
+    ''' Adds a predefined set of basic polygon and line styles to the KML document.
+    ''' Each generated style includes:
+    ''' - A semi‑transparent polygon fill color
+    ''' - An opaque line color
+    ''' - A fixed line width of 2
+    ''' 
+    ''' The routine creates one <Style> element per entry in the BasicStyles list,
+    ''' assigning the style's ID, polygon color, and line color accordingly.
+    ''' </summary>
+    ''' <param name="doc">
+    ''' The <see cref="KmlDocument"/> instance that will receive the generated styles.
+    ''' </param>
+    Sub KMLBasicStyles(doc As KmlDocument)
+
+        ' Add the basic colour styles. they contain a semi-transparent fill and an opaque line. 
+        Dim BasicStyles As New List(Of (id As String, polyColor As String, lineColor As String)) From {
+            ("red", "9F0000Ff", "ff0000ff"),
+            ("green", "9F00Ff00", "ff00ff00"),
+            ("blue", "9Fff0000", "ffff0000"),
+            ("yellow", "9F00Ffff", "ff00ffff"),
+            ("cyan", "9Fff00ff", "ffff00ff"),
+            ("magenta", "9Fffff00", "ffffff00"),
+            ("white", "9Fffffff", "ffffffff")
+        }
+
+        For Each style In BasicStyles
+            Dim s As New KmlStyle
+            With s
+                .Id = style.id
+                .PolyColor = style.polyColor
+                .LineColor = style.lineColor
+                .Fill = True
+                .LineWidth = 2
+            End With
+            doc.Styles.Add(s)
+        Next
+    End Sub
+    ''' <summary>
+    ''' Creates highlight style maps for all DXCC boundary colours.
+    ''' Each generated <StyleMap> links:
+    ''' - A normal style (based on the ColourMapping array)
+    ''' - A highlight style (always the "white" style)
+    ''' 
+    ''' This enables Google Earth to switch polygon appearance when the
+    ''' user hovers over a DXCC entity, providing interactive visual feedback.
+    ''' </summary>
+    ''' <param name="doc">
+    ''' The <see cref="KmlDocument"/> that will receive the generated StyleMap entries.
+    ''' </param>
+    Sub KMLhover(doc As KmlDocument)
+        ' Create style maps to highlight polygons when hovering (i.e. use white style on hover)
+        For i = 1 To ColourMapping.Length - 1
+            Dim sm As New KmlStyleMap
+            With sm
+                .Id = $"boundary_{i}"
+                .NormalStyleUrl = $"#{ColourMapping(i)}"
+                .HighlightStyleUrl = "#white"
+            End With
+            doc.StyleMaps.Add(sm)
+        Next
     End Sub
     Private Function LoadDxccGeometry(id As Integer) As DxccGeometryResult
         Using conn As New SqliteConnection(DXCC_DATA)
@@ -781,10 +833,7 @@ There are some additional folders which are closed by default. You must open the
             connect.Open()
             sql = connect.CreateCommand()
 
-            kml.WriteLine("<Folder>")
-            kml.WriteLine("<name>Grid Squares</name>")
-            kml.WriteLine("<visibility>0</visibility>")
-            kml.WriteLine("<open>0</open>")
+            kml.WriteLine("<Folder><name>Grid Squares</name><visibility>0</visibility><open>0</open>")
             kml.WriteLine("<Style id=""grid"">" &
                       "<IconStyle><scale>0</scale></IconStyle>" &
                       "<LabelStyle><color>9Fffff00</color><scale>1.2</scale></LabelStyle>" &
@@ -827,7 +876,7 @@ There are some additional folders which are closed by default. You must open the
                 If Squares.Count = 0 Then Continue For
 
                 kml.WriteLine($"<Folder><name>{KMLescape(entity)}</name><visibility>0</visibility><open>0</open>")
-
+                kml.WriteLine($"<Folder><name>Grid labels</name><visibility>0</visibility><open>0</open>")
                 ' Label each square
                 For Each key In Squares
                     Dim parts = key.Split(","c)
@@ -867,9 +916,10 @@ There are some additional folders which are closed by default. You must open the
                     AddEdge(vert, x0, y0, y1) ' left
                     AddEdge(vert, x1, y0, y1) ' right
                 Next
+                kml.WriteLine("</Folder>")
 
                 ' Draw merged lines
-                kml.WriteLine("<Placemark><styleUrl>#grid</styleUrl><name>lines</name>")
+                kml.WriteLine("<Placemark><styleUrl>#grid</styleUrl><name>Grid lines</name>")
                 kml.WriteLine("<MultiGeometry>")
 
                 ' Horizontal runs
@@ -963,25 +1013,15 @@ There are some additional folders which are closed by default. You must open the
 
     Sub GridSquareFolderOld(kml As StreamWriter, DXCClist As List(Of Integer))
 
-        Dim sql As SqliteCommand, SQLdr As SqliteDataReader, timer As New Stopwatch, Ocean As Integer = 0
+        Dim sql As SqliteCommand, SQLdr As SqliteDataReader
         Dim GridSquares As New SortedDictionary(Of String, Envelope)   ' gridsquare → envelope
-        Dim Land As New Dictionary(Of String, Integer?)                ' gridsquares known to be land
         Dim Drawn As New Dictionary(Of String, Integer?)               ' gridsquares already drawn
         Using connect As New SqliteConnection(DXCC_DATA)
             connect.Open()
-            timer.Start()
             sql = connect.CreateCommand()
 
-            ' Load list of gridsquares known to be land
-            sql.CommandText = "SELECT * FROM LAND"
-            SQLdr = sql.ExecuteReader()
-            While SQLdr.Read()
-                Land(SafeStr(SQLdr("gridsquare"))) = Nothing
-            End While
-            SQLdr.Close()
-
             ' Folder header
-            AppendText(Form1.TextBox1, $"Making KML for Grid Square folder ")
+            AppendText(Form1.TextBox1, $"Making KML for Grid Square folder{vbCrLf}")
             Application.DoEvents()
             kml.WriteLine("<Folder>")
             kml.WriteLine("<name>Grid Squares</name>")
@@ -1021,12 +1061,7 @@ There are some additional folders which are closed by default. You must open the
                     Dim Y = gridExtent.MinY
                     While Y < gridExtent.MaxY
 
-                        Dim sqEnv As New Envelope(
-                        X,
-                        X + GridSquareX - EPS,
-                        Y,
-                        Y + GridSquareY - EPS
-                    )
+                        Dim sqEnv As New Envelope(X, X + GridSquareX - EPS, Y, Y + GridSquareY - EPS)
 
                         ' Build polygon for this grid square and test intersection with DXCC geometry
                         Dim sqPoly As Geometry = factory.ToGeometry(sqEnv)
@@ -1034,12 +1069,8 @@ There are some additional folders which are closed by default. You must open the
 
                             Dim gs As String = GridSquare(X, Y)   ' 4‑char Maidenhead
 
-                            If Land.ContainsKey(gs) Then
-                                If Not GridSquares.ContainsKey(gs) Then
-                                    GridSquares.Add(gs, sqEnv)
-                                End If
-                            Else
-                                Ocean += 1
+                            If Not GridSquares.ContainsKey(gs) Then
+                                GridSquares.Add(gs, sqEnv)
                             End If
                         End If
 
@@ -1056,7 +1087,7 @@ There are some additional folders which are closed by default. You must open the
                     Dim env = sq.Value
                     Dim center As New Coordinate(env.MinX + env.Width / 2, env.MinY + env.Height / 2)
 
-                    kml.WriteLine($"<Placemark><name>{sq.Key}</name><styleUrl>#grid</styleUrl><visibility>0</visibility>")
+                    kml.WriteLine($"<Placemark><name>{sq.Key}</name><styleUrl>#grid</styleUrl>")
 
                     If Not Drawn.ContainsKey(sq.Key) Then
 
@@ -1101,8 +1132,6 @@ There are some additional folders which are closed by default. You must open the
             Next
         End Using
         kml.WriteLine("</Folder>")
-        timer.Stop()
-        AppendText(Form1.TextBox1, $" {Ocean} GS eliminated, {Drawn.Count:n0} Unique grid squares [{timer.Elapsed.Seconds:f1}s]{vbCrLf}")
 
     End Sub
 
@@ -1843,34 +1872,4 @@ There are some additional folders which are closed by default. You must open the
         Return New KmlDocument()
     End Function
 
-    Public Function CreatePlacemark(name As String,
-                                    geom As Geometry,
-                                    Optional styleUrl As String = Nothing,
-                                    Optional desc As String = Nothing) As KmlPlacemark
-
-        Return New KmlPlacemark With {
-        .Name = name,
-        .Geometry = geom,
-        .StyleUrl = styleUrl,
-        .Description = desc
-    }
-    End Function
-
-    Public Sub WriteDocument(doc As KmlDocument, path As String)
-        doc.WriteToFile(path)
-    End Sub
-
-    Public Sub WriteGeometryToFile(geom As Geometry,
-                               path As String,
-                               Optional name As String = "Geometry",
-                               Optional styleUrl As String = Nothing)
-
-        Dim doc = New KmlDocument()
-        doc.AddPlacemark(New KmlPlacemark With {
-        .Name = name,
-        .Geometry = geom,
-        .StyleUrl = styleUrl
-    })
-        doc.WriteToFile(path)
-    End Sub
 End Module

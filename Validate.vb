@@ -130,10 +130,12 @@ Module Validate
             Dim sql = connect.CreateCommand()
             Dim sql1 = connect.CreateCommand()
 
-            sql.CommandText =
-                "SELECT *, IOTA_DXCC_IOTA.dxcc_num AS DXCC " &
-                "FROM IOTA_DXCC_IOTA JOIN IOTA_Groups USING (refno)"
-
+            sql.CommandText = "
+                        SELECT *, IOTA_DXCC_IOTA.dxcc_num AS DXCC
+                        FROM IOTA_DXCC_IOTA
+                        JOIN IOTA_Groups USING (refno)
+                        JOIN DXCC ON DXCC.DXCCnum = IOTA_DXCC_IOTA.dxcc_num
+                        "
             Dim rdr = sql.ExecuteReader()
 
             While rdr.Read()
@@ -149,25 +151,18 @@ Module Validate
                 ' Convert envelope → polygon
                 Dim iotaPoly As NetTopologySuite.Geometries.Geometry = factory.ToGeometry(env)
 
-                ' Load DXCC geometry (already NTS)
-                sql1.CommandText = $"SELECT * FROM DXCC WHERE dxccnum={rdr("DXCC")}"
-                Dim rdr1 = sql1.ExecuteReader()
-                rdr1.Read()
+                AppendText(Form1.TextBox1, $"Checking IOTA {rdr("refno")} and {rdr("Entity")}{vbCrLf}")
 
-                AppendText(Form1.TextBox1,
-                           $"Checking IOTA {rdr("refno")} and {rdr1("Entity")}{vbCrLf}")
-
-                Dim dxccGeom As NetTopologySuite.Geometries.Geometry = FromGeoJsonToNTS(rdr1("geometry"))
-
-                rdr1.Close()
+                Dim dxccGeom As NetTopologySuite.Geometries.Geometry = FromGeoJsonToNTS(rdr("geometry"))
 
                 ' NTS intersection test
                 If Not dxccGeom.Intersects(iotaPoly) Then
                     AppendText(Form1.TextBox1,
-                               $"************** IOTA ref {rdr("refno")} - {rdr("name")} does not intersect with DXCC {rdr1("Entity")} **************{vbCrLf}")
+                               $"************** IOTA ref {rdr("refno")} - {rdr("name")} does not intersect with DXCC {rdr("Entity")} **************{vbCrLf}")
                 End If
 
             End While
+            rdr.Close()
         End Using
 
         AppendText(Form1.TextBox1, $"Done{vbCrLf}")

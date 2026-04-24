@@ -3,10 +3,6 @@ Imports NetTopologySuite.Densify
 Imports NetTopologySuite.Geometries
 Imports NetTopologySuite.Geometries.Utilities
 Imports NetTopologySuite.IO
-Imports NetTopologySuite.NtsGeometryServices
-Imports NetTopologySuite.Operation.Densify
-Imports NetTopologySuite.Operation.Valid
-
 
 Public Module NtsGeometryTools
     Public factory As GeometryFactory = NtsGeometryServices.Instance.CreateGeometryFactory(4326)

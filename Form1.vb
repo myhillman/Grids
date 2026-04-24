@@ -26,6 +26,9 @@ Partial Public Class Form1
         Dim m As New ToolStripMenuItem("Convert legacy")
         AddHandler m.Click, AddressOf ConvertLegacyToolStripMenuItem_Click
         ImportToolStripMenuItem.DropDownItems.Add(m)
+        Dim n As New ToolStripMenuItem("OSM Alternatives")
+        AddHandler n.Click, AddressOf OSMAlternativesToolStripMenuItem_Click
+        ImportToolStripMenuItem.DropDownItems.Add(n)
     End Sub
     Public Async Sub UseShapefileToolStripMenuItem1_Click(sender As Object, e As EventArgs) _
         Handles UseShapefileToolStripMenuItem1.Click
@@ -235,4 +238,7 @@ Partial Public Class Form1
         Await ConvertLegacy.ConvertLegacyQueriesAsync()
     End Sub
 
+    Private Async Sub OSMAlternativesToolStripMenuItem_Click(sender As Object, e As EventArgs)
+        Await FindOSMAlternatives()
+    End Sub
 End Class

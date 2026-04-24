@@ -129,21 +129,21 @@ Module dxccSources
 
         Select Case fakeName
 
-            Case "Willis Is"
-                lon = 150.2 : lat = -16.29
-                radius_m = 200
+            'Case "Willis Is"
+            '    lon = 149.9645 : lat = -16.28733
+            '    radius_m = 200
 
-            Case "Mellish Reef"
-                lon = 155.8644 : lat = -17.4126
-                radius_m = 1000
+            'Case "Mellish Reef"
+            '    lon = 155.8644 : lat = -17.4126
+            '    radius_m = 1000
 
             Case "St Peter & St Paul Rocks"
                 lon = -29.335 : lat = 0.9158
                 radius_m = 1000
 
-            Case "Malpelo Is"
-                lon = -81.5833 : lat = 3.9833
-                radius_m = 1000
+            'Case "Malpelo Is"
+            '    lon = -81.5833 : lat = 3.9833
+            '    radius_m = 1000
 
             Case "SMOM"
                 ' Sovereign Military Order of Malta (SMOM). The Magistral Palace in Rome
