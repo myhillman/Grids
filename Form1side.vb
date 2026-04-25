@@ -1,23 +1,15 @@
 ﻿Imports System.IO
-Imports Esri.ArcGISRuntime
 Imports Esri.ArcGISRuntime.Data
-Imports Esri.ArcGISRuntime.Geometry
-Imports Esri.ArcGISRuntime.Ogc
 Imports NetTopologySuite
 Imports NetTopologySuite.Geometries
 Imports NetTopologySuite.IO
-Imports NetTopologySuite.Operation.Polygonize
 Imports NetTopologySuite.Simplify
-'Imports NetTopologySuite.IO.Shapefile
-Imports Microsoft.Data.Sqlite
 
 Module Form1side
     Public Const GridFieldX = 20, GridFieldY = 10    ' size of gridfield in degrees in X,Y
     Public Const GridSquareX = 2, GridSquareY = 1    ' size of gridsquare in degrees in X,Y
     Public Const EARTH_RADIUS = 6371000    ' radius of earth in meters
     Const CLOSENESS = 1000     ' distance for Generalize in meters
-    Public KMLheader As String
-    Public Const KMLfooter = "</Document></kml>"       ' standard footer for kml file
 
     Public Delegate Sub SetProgressCallback(pb As System.Windows.Forms.ProgressBar, value As Integer)
     Public Sub UpdateProgressBar(pb As System.Windows.Forms.ProgressBar, value As Integer)
@@ -420,7 +412,6 @@ Module Form1side
         AppendText(Form1.TextBox1, $"Shapefile file created with {Removed} countries removed and {countries} added{vbCrLf}")
     End Sub
 
-
     Public Sub RemoveEmptyGeometry()
         ' Remove any geometry that is empty. This can be the result of an overagressive Generalize operation
         Dim sql As SqliteCommand, SQLdr As SqliteDataReader, sqlR As SqliteCommand
@@ -529,85 +520,6 @@ Module Form1side
         End Using
 
     End Sub
-    Public Sub InnerRings()
-
-        Dim KnownInner As New List(Of String) From {
-        "Argentina", "Australia", "Belarus", "Belgium", "China", "Fed Rep of Germany",
-        "France", "French Polynesia", "Indonesia", "Italy", "Kyrgyzstan", "Mozambique",
-        "Netherlands", "Oman", "Paraguay", "Republic of South Africa", "Serbia",
-        "Spain", "Switzerland", "United Arab Emirates", "Uruguay", "Uzbekistan"
-    }
-
-        Dim sql As SqliteCommand, SQLdr As SqliteDataReader
-
-        Using connect As New SqliteConnection(DXCC_DATA)
-            connect.Open()
-
-            sql = connect.CreateCommand()
-            sql.CommandText = "SELECT COUNT(*) AS Total FROM DXCC WHERE geometry IS NOT NULL"
-            SQLdr = sql.ExecuteReader()
-            SQLdr.Read()
-
-            With Form1.ProgressBar1
-                .Minimum = 0
-                .Value = 0
-                .Maximum = SQLdr("Total")
-            End With
-            SQLdr.Close()
-
-            sql.CommandText = "SELECT * FROM DXCC WHERE geometry IS NOT NULL ORDER BY Entity"
-            SQLdr = sql.ExecuteReader()
-
-            While SQLdr.Read()
-                Form1.ProgressBar1.Value += 1
-
-                Dim entity As String = SQLdr("Entity")
-                If KnownInner.Contains(entity) Then Continue While
-
-                ' Load geometry (Polygon or MultiPolygon)
-                Dim geom As NetTopologySuite.Geometries.Geometry = FromGeoJsonToNTS(SQLdr("geometry"))
-
-                ' Handle MultiPolygon by iterating each polygon
-                Dim polys As New List(Of NetTopologySuite.Geometries.Polygon)
-
-                If TypeOf geom Is NetTopologySuite.Geometries.Polygon Then
-                    polys.Add(DirectCast(geom, NetTopologySuite.Geometries.Polygon))
-                ElseIf TypeOf geom Is NetTopologySuite.Geometries.MultiPolygon Then
-                    Dim mp = DirectCast(geom, NetTopologySuite.Geometries.MultiPolygon)
-                    For i = 0 To mp.NumGeometries - 1
-                        polys.Add(DirectCast(mp.GetGeometryN(i), NetTopologySuite.Geometries.Polygon))
-                    Next
-                End If
-
-                ' Check each polygon for interior rings
-                For Each poly In polys
-                    Dim holeCount = poly.NumInteriorRings
-
-                    If holeCount > 0 Then
-                        For i = 0 To holeCount - 1
-                            Dim hole As LinearRing = poly.GetInteriorRingN(i)
-                            Dim coords = hole.Coordinates
-
-                            ' Compute centroid of the hole
-                            Dim cx As Double = 0, cy As Double = 0
-                            For Each c In coords
-                                cx += c.X
-                                cy += c.Y
-                            Next
-                            cx /= coords.Length
-                            cy /= coords.Length
-
-                            AppendText(Form1.TextBox1,
-                            $"Inner ring(s): {entity} at {cy:F6},{cx:F6}{vbCrLf}")
-                        Next
-                    End If
-                Next
-
-            End While
-            SQLdr.Close()
-        End Using
-    End Sub
-
     Public Sub KMLnts()
 
         Dim sql As SqliteCommand, sqldr As SqliteDataReader

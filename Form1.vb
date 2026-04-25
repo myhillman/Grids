@@ -92,7 +92,7 @@ Partial Public Class Form1
 
     Private Sub InnerRingsToolStripMenuItem_Click(sender As Object, e As EventArgs) _
         Handles InnerRingsToolStripMenuItem.Click
-        InnerRings()
+        ' removed
     End Sub
 
     Private Sub ImportCQITUZonesToolStripMenuItem_Click(sender As Object, e As EventArgs) _

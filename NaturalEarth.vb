@@ -172,13 +172,12 @@ Public Module NaturalEarth
     End Function
 
     ' ------------------------------------------------------------
-    ' SHAPEFILE LOADER
+    ' GeoJson LOADER
     ' ------------------------------------------------------------
     Private ReadOnly _byKey As New SortedDictionary(Of String, Geometry)(StringComparer.OrdinalIgnoreCase)
     Private ReadOnly _features As New List(Of NetTopologySuite.Features.Feature)
     Private ReadOnly _featureLayer As New Dictionary(Of String, String)
     Private ReadOnly _layerOrder As New List(Of String)
-
 
     Private Async Function LoadGeoJsonAsync(path As String) As Task
         If Not File.Exists(path) Then

@@ -17,7 +17,8 @@ Imports NetTopologySuite.Operation.Polygonize
 Imports NetTopologySuite.Precision
 Imports SQLitePCL
 Module KMLExport
-
+    Public KMLheader As String
+    Public Const KMLfooter = "</Document></kml>"       ' standard footer for kml file
     Const CoordsPerLine = 10          ' coordinates per line
     Private prefixes As New List(Of (p As Point, pfx As String))
     Public ColourMapping = {"", "red", "green", "blue", "yellow", "cyan", "magenta", "white"}   ' colours for polygons
@@ -519,7 +520,7 @@ There are some additional folders which are closed by default. You must open the
 
                 ' --- Label point using NTS centroid ---
                 Dim centroid As Coordinate = ntsGeom.Centroid.Coordinate
-                kml.WriteLine("<Placemark>")
+                kml.WriteLine("<Placemark><visibility>0</visibility>")
                 kml.WriteLine($"  <name>{KMLescape(entity)}</name>")
                 kml.WriteLine("  <styleUrl>#bbox</styleUrl>")
                 kml.WriteLine($"  <Point><coordinates>{centroid.X:f2},{centroid.Y:f2}</coordinates></Point>")
@@ -887,7 +888,7 @@ There are some additional folders which are closed by default. You must open the
                     Dim label = GridSquare(gx, gy)
                     Dim center As New Coordinate(gx + 1, gy + 0.5)
 
-                    kml.WriteLine("<Placemark><name>" & label & "</name><styleUrl>#grid</styleUrl>")
+                    kml.WriteLine("<Placemark><visibility>0</visibility><name>" & label & "</name><styleUrl>#grid</styleUrl>")
                     kml.Write("<Point>")
                     WriteCoordinates(kml, {center}, 1)
                     kml.WriteLine("</Point>")
@@ -919,7 +920,7 @@ There are some additional folders which are closed by default. You must open the
                 kml.WriteLine("</Folder>")
 
                 ' Draw merged lines
-                kml.WriteLine("<Placemark><styleUrl>#grid</styleUrl><name>Grid lines</name>")
+                kml.WriteLine("<Placemark><visibility>0</visibility><styleUrl>#grid</styleUrl><name>Grid lines</name>")
                 kml.WriteLine("<MultiGeometry>")
 
                 ' Horizontal runs
@@ -1507,13 +1508,13 @@ There are some additional folders which are closed by default. You must open the
 
     Sub EUASborder(kml As StreamWriter)
         ' add the EU/AS Russia border
-        Dim doc As XDocument = XDocument.Load($"{Application.StartupPath}\BorderEUAS.kml")    ' read the XML
-        Dim ns As XNamespace = doc.Root.Name.Namespace      ' get namespace name so we can qualify everything
-        Dim nsmgr As New XmlNamespaceManager(New NameTable())
-        nsmgr.AddNamespace("x", ns.NamespaceName)
-        Dim placemark = doc.XPathSelectElement("//x:Placemark[2]", nsmgr).ToString       ' find second placemark
-        placemark = Strings.Replace(placemark, $" xmlns=""{ns}""", "")         ' remove pesky namespace
-        kml.WriteLine(placemark)                ' write border to kml file
+        Dim GeoJson = File.ReadAllText(Path.Combine(Application.StartupPath, "BorderEUAS.json"))    ' read the border file
+        Dim nts = FromGeoJsonToNTS(GeoJson)     ' convert to NTS geometry
+        kml.WriteLine("<Placemark><name>EU/AS border</name><styleUrl>#red</styleUrl>")   ' create placemark
+        kml.WriteLine("<description>The red line shows the precise bounadry between European and Asiatic Russia.
+There is a rumour that many just use the 60 degrees of longitude line. They are very close. It remains unclear which is actually used.</description>")
+        WriteKmlLineString(nts, kml, 3)         ' write the geometry as a line string
+        kml.WriteLine("</Placemark>")
     End Sub
     Private Function NtsDensify(poly As NetTopologySuite.Geometries.Polygon, degrees As Double) As NetTopologySuite.Geometries.Polygon
         If degrees <= 0 Then Return poly
@@ -1693,6 +1694,26 @@ There are some additional folders which are closed by default. You must open the
 
         kml.WriteLine($"<Point><coordinates>{lon},{lat}</coordinates></Point>")
     End Sub
+    Private Sub WriteKmlMultiLineString(mls As MultiLineString, kml As StreamWriter, decimals As Integer)
+        If mls Is Nothing OrElse mls.NumGeometries = 0 Then Exit Sub
+
+        ' If only one LineString, write it normally
+        If mls.NumGeometries = 1 Then
+            WriteKmlLineString(CType(mls.GetGeometryN(0), LineString), kml, decimals)
+            Return
+        End If
+
+        ' MultiLineString → wrap in <MultiGeometry>
+        kml.WriteLine("<MultiGeometry>")
+
+        For i As Integer = 0 To mls.NumGeometries - 1
+            Dim ls As LineString = CType(mls.GetGeometryN(i), LineString)
+            WriteKmlLineString(ls, kml, decimals)
+        Next
+
+        kml.WriteLine("</MultiGeometry>")
+    End Sub
+
     ''' <summary>
     ''' Writes a KML <LineString> element representing the supplied NTS geometry.
     ''' </summary>

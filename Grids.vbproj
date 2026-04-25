@@ -71,6 +71,9 @@
   </ItemGroup>
   
   <ItemGroup>
+    <None Update="BorderEUAS.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Update="BorderEUAS.kml" CopyToOutputDirectory="PreserveNewest" />
     <None Update="CQ.kml" CopyToOutputDirectory="PreserveNewest" />
     <None Update="DXCC.cpg" CopyToOutputDirectory="PreserveNewest" />

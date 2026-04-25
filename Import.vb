@@ -1,20 +1,23 @@
 ﻿Imports System.IO
 Imports System.IO.Compression
 Imports System.Net.Http
+Imports System.Security.Policy
 Imports System.Text.Json.Nodes
 Imports System.Text.RegularExpressions
 Imports System.Web
+Imports System.Xml.Linq
 Imports Esri.ArcGISRuntime.Data
 Imports Esri.ArcGISRuntime.Geometry
 Imports HtmlAgilityPack
 Imports Microsoft.VisualBasic.FileIO
 Imports NetTopologySuite
+Imports NetTopologySuite.Features
 Imports NetTopologySuite.Geometries
 Imports NetTopologySuite.IO
+Imports NetTopologySuite.Operation.Linemerge
+Imports NetTopologySuite.Operation.Union
+Imports NetTopologySuite.Precision
 Imports NetTopologySuite.Simplify
-Imports NetTopologySuite.Features
-Imports PolylinerNet
-Imports System.Xml.Linq
 
 
 Module Import
@@ -53,22 +56,23 @@ Module Import
     Sub ImportEUASBorder()
 
         Dim factory As GeometryFactory = NtsGeometryServices.Instance.CreateGeometryFactory(4326)
-        Dim lineList As New List(Of LineString)
+        Dim segments As New List(Of LineString)
 
-        ' Load KML
-        Dim doc = XDocument.Load($"{Application.StartupPath}\border.kml")
+        ' ------------------------------------------------------------
+        ' LOAD KML
+        ' ------------------------------------------------------------
+        Dim doc = XDocument.Load(Path.Combine(Application.StartupPath, "BorderEUAS.kml"))
         Dim ns = doc.Root.Name.Namespace
         Dim linestrings = doc.Descendants(ns + "LineString")
 
         AppendText(Form1.TextBox1, $"{linestrings.Count} linestrings loaded{vbCrLf}")
 
-        ' Parse each <coordinates> block
+        ' ------------------------------------------------------------
+        ' PARSE EACH <coordinates> BLOCK
+        ' ------------------------------------------------------------
         For Each coordinates In linestrings.Descendants(ns + "coordinates")
 
-            Dim raw = coordinates.Value
-            raw = Regex.Replace(raw, "[^0-9\-\., ]", "")
-            raw = raw.Trim()
-
+            Dim raw = Regex.Replace(coordinates.Value, "[^0-9\-\., ]", "").Trim()
             Dim coordPairs = raw.Split(" "c, StringSplitOptions.RemoveEmptyEntries)
 
             Dim pts As New List(Of Coordinate)
@@ -76,55 +80,182 @@ Module Import
             For Each pair In coordPairs
                 Dim parts = pair.Split(","c)
                 If parts.Length >= 2 Then
-                    Dim lon = Double.Parse(parts(0))
-                    Dim lat = Double.Parse(parts(1))
+                    Dim lon = Math.Round(Double.Parse(parts(0)), 5)
+                    Dim lat = Math.Round(Double.Parse(parts(1)), 5)
                     pts.Add(New Coordinate(lon, lat))
                 End If
             Next
 
             If pts.Count >= 2 Then
-                lineList.Add(factory.CreateLineString(pts.ToArray()))
+                segments.Add(factory.CreateLineString(pts.ToArray()))
             End If
         Next
 
-        ' Merge into a MultiLineString
-        Dim multi As MultiLineString = factory.CreateMultiLineString(lineList.ToArray())
+        ' ------------------------------------------------------------
+        ' SNAP TO 1e-5 GRID
+        ' ------------------------------------------------------------
+        Dim pm As New PrecisionModel(100000.0)
+        Dim reducer As New GeometryPrecisionReducer(pm)
 
-        Dim multiGeneralized = SimplifyLinework(multi, 1)
+        Dim snapped As New List(Of LineString)
+        For Each ls In segments
+            snapped.Add(CType(reducer.Reduce(ls), LineString))
+        Next
 
-        ' Output KML
-        Using kml As New StreamWriter($"{Application.StartupPath}\KML\BorderEUAS.kml", False)
-            kml.WriteLine(KMLheader)
-            kml.WriteLine("<Placemark><styleUrl>#red</styleUrl>")
-            kml.WriteLine("<name>Boundary between European and Asiatic Russia</name>")
-            kml.WriteLine("<description>Generally accepted border between Europe and Asia.</description>")
-            kml.WriteLine("<MultiGeometry>")
+        ' ------------------------------------------------------------
+        ' COLLECT ALL ENDPOINTS
+        ' ------------------------------------------------------------
+        Dim endpoints As New List(Of Coordinate)
 
-            ' NTS version of iterating parts
-            If TypeOf multiGeneralized Is LineString Then
-                Dim ls = DirectCast(multiGeneralized, LineString)
-                kml.WriteLine("<LineString>")
-                WriteCoordinates(kml, ls.Coordinates, 4)
-                kml.WriteLine("</LineString>")
+        For Each ls In snapped
+            endpoints.Add(ls.StartPoint.Coordinate)
+            endpoints.Add(ls.EndPoint.Coordinate)
+        Next
 
-            ElseIf TypeOf multiGeneralized Is MultiLineString Then
-                Dim mls = DirectCast(multiGeneralized, MultiLineString)
-                For i = 0 To mls.NumGeometries - 1
-                    Dim ls = DirectCast(mls.GetGeometryN(i), LineString)
-                    kml.WriteLine("<LineString>")
-                    WriteCoordinates(kml, ls.Coordinates, 4)
-                    kml.WriteLine("</LineString>")
-                Next
+        endpoints = endpoints.Distinct(New CoordinateEqualityComparer()).ToList()
+
+        ' ------------------------------------------------------------
+        ' BUILD COMPLETE GRAPH (Euclidean distances)
+        ' ------------------------------------------------------------
+        Dim n = endpoints.Count
+        Dim edges As New List(Of Tuple(Of Integer, Integer, Double))
+
+        For i = 0 To n - 1
+            For j = i + 1 To n - 1
+                Dim dx = endpoints(i).X - endpoints(j).X
+                Dim dy = endpoints(i).Y - endpoints(j).Y
+                Dim d2 = dx * dx + dy * dy
+                edges.Add(Tuple.Create(i, j, d2))
+            Next
+        Next
+
+        ' ------------------------------------------------------------
+        ' KRUSKAL MST
+        ' ------------------------------------------------------------
+        edges = edges.OrderBy(Function(e) e.Item3).ToList()
+
+        Dim parent(n - 1) As Integer
+        For i = 0 To n - 1
+            parent(i) = i
+        Next
+
+        Dim Find As Func(Of Integer, Integer) =
+        Function(x)
+            While parent(x) <> x
+                parent(x) = parent(parent(x))
+                x = parent(x)
+            End While
+            Return x
+        End Function
+
+        Dim Union As Action(Of Integer, Integer) =
+        Sub(a, b)
+            parent(Find(a)) = Find(b)
+        End Sub
+
+        Dim adj As New Dictionary(Of Integer, List(Of Integer))
+        For i = 0 To n - 1
+            adj(i) = New List(Of Integer)
+        Next
+
+        For Each e In edges
+            Dim a = e.Item1
+            Dim b = e.Item2
+            If Find(a) <> Find(b) Then
+                Union(a, b)
+                adj(a).Add(b)
+                adj(b).Add(a)
             End If
+        Next
 
-            kml.WriteLine("</MultiGeometry>")
-            kml.WriteLine("</Placemark>")
-            kml.WriteLine(KMLfooter)
-        End Using
+        ' ------------------------------------------------------------
+        ' FIND LONGEST PATH IN MST (two BFS passes)
+        ' ------------------------------------------------------------
+        Dim BFS As Func(Of Integer, Tuple(Of Integer, Dictionary(Of Integer, Integer))) =
+        Function(start)
+            Dim q As New Queue(Of Integer)
+            Dim dist As New Dictionary(Of Integer, Integer)
+            Dim parentNode As New Dictionary(Of Integer, Integer)
+
+            q.Enqueue(start)
+            dist(start) = 0
+            parentNode(start) = -1
+
+            While q.Count > 0
+                Dim u = q.Dequeue()
+                For Each v In adj(u)
+                    If Not dist.ContainsKey(v) Then
+                        dist(v) = dist(u) + 1
+                        parentNode(v) = u
+                        q.Enqueue(v)
+                    End If
+                Next
+            End While
+
+            Dim far = dist.OrderByDescending(Function(kv) kv.Value).First().Key
+            Return Tuple.Create(far, parentNode)
+        End Function
+
+        Dim first = BFS(0).Item1
+        Dim secondResult = BFS(first)
+        Dim last = secondResult.Item1
+        Dim parentMap = secondResult.Item2
+
+        ' ------------------------------------------------------------
+        ' RECONSTRUCT LONGEST PATH
+        ' ------------------------------------------------------------
+        Dim chain As New List(Of Coordinate)
+        Dim cur = last
+
+        While cur <> -1
+            chain.Add(endpoints(cur))
+            cur = parentMap(cur)
+        End While
+
+        chain.Reverse()
+
+        ' ------------------------------------------------------------
+        ' BUILD LINESTRING
+        ' ------------------------------------------------------------
+        Dim fullBorder As LineString = factory.CreateLineString(chain.ToArray())
+
+        ' ------------------------------------------------------------
+        ' SIMPLIFY TO 1 KM
+        ' ------------------------------------------------------------
+        Dim tolDeg As Double = 1000 / 111000.0
+        Dim simplified As NetTopologySuite.Geometries.Geometry = DouglasPeuckerSimplifier.Simplify(fullBorder, tolDeg)
+
+        AppendText(Form1.TextBox1, $" Border simplified to {simplified.NumPoints} points{vbCrLf}")
+
+        ' ------------------------------------------------------------
+        ' WRITE GEOJSON
+        ' ------------------------------------------------------------
+        Dim writer As New GeoJsonWriter()
+        Dim json = writer.Write(simplified)
+
+        File.WriteAllText(Path.Combine(Application.StartupPath, "BorderEUAS.json"), json)
 
         AppendText(Form1.TextBox1, $"Done{vbCrLf}")
 
     End Sub
+
+    ' ------------------------------------------------------------
+    ' SUPPORT: Coordinate comparer
+    ' ------------------------------------------------------------
+    Public Class CoordinateEqualityComparer
+        Implements IEqualityComparer(Of Coordinate)
+
+        Public Overloads Function Equals(a As Coordinate, b As Coordinate) As Boolean _
+        Implements IEqualityComparer(Of Coordinate).Equals
+            Return a.X = b.X AndAlso a.Y = b.Y
+        End Function
+
+        Public Overloads Function GetHashCode(c As Coordinate) As Integer _
+        Implements IEqualityComparer(Of Coordinate).GetHashCode
+            Return c.X.GetHashCode() Xor c.Y.GetHashCode()
+        End Function
+    End Class
+
     Private Function SimplifyLinework(
                                       geom As NetTopologySuite.Geometries.Geometry,
                                       tolerance As Double

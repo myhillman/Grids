@@ -421,36 +421,56 @@ Module dxccSources
         Return g
     End Function
 
-
     Private Function Tokenize(rule As String) As List(Of RuleToken)
 
         Dim tokens As New List(Of RuleToken)
+        If String.IsNullOrWhiteSpace(rule) Then Return tokens
 
-        If String.IsNullOrWhiteSpace(rule) Then
-            Return tokens
-        End If
+        Dim parts As New List(Of String)
+        Dim ops As New List(Of Char)
 
-        Dim parts = rule.Split({"+"c, "-"c}, StringSplitOptions.RemoveEmptyEntries)
-        Dim ops = New List(Of Char)
+        Dim sb As New System.Text.StringBuilder()
+        Dim inQuotes As Boolean = False
 
-        ' Extract operators in order
-        For Each ch In rule
-            If ch = "+"c OrElse ch = "-"c Then
-                ops.Add(ch)
+        For i As Integer = 0 To rule.Length - 1
+            Dim ch = rule(i)
+
+            If ch = """"c Then
+                ' Toggle quoted mode
+                inQuotes = Not inQuotes
+                Continue For
             End If
+
+            If Not inQuotes AndAlso (ch = "+"c OrElse ch = "-"c) Then
+                ' End current token
+                If sb.Length > 0 Then
+                    parts.Add(sb.ToString().Trim())
+                    sb.Clear()
+                End If
+
+                ops.Add(ch)
+                Continue For
+            End If
+
+            sb.Append(ch)
         Next
 
+        ' Final token
+        If sb.Length > 0 Then
+            parts.Add(sb.ToString().Trim())
+        End If
+
         ' First token defaults to '+'
-        If ops.Count < parts.Length Then
+        If ops.Count < parts.Count Then
             ops.Insert(0, "+"c)
         End If
 
-        ' Build RuleToken objects
-        For i = 0 To parts.Length - 1
+        ' Build RuleToken list
+        For i = 0 To parts.Count - 1
             tokens.Add(New RuleToken With {
-                          .Op = ops(i),
-                          .Token = parts(i).Trim()
-                          })
+            .Op = ops(i),
+            .Token = parts(i)
+        })
         Next
 
         Return tokens
