@@ -109,6 +109,7 @@ Module dxccSources
         End If
 
         Dim g = Await OsmLand.ResolveOSM(osmId, osmType)
+        Debug.WriteLine("BuildFromOSM: " & g.NumPoints)
 
         If g Is Nothing Then
             Throw New Exception("OSM geometry not found: " & osmName)
@@ -210,9 +211,10 @@ Module dxccSources
         ' ---------------------------------------------------------
         ' STEP 2 — Pre-simplify (optional but useful)
         ' ---------------------------------------------------------
-        Dim preTol = 0.00002 ' ~2m
-        baseGeom = TopologyPreservingSimplifier.Simplify(baseGeom, preTol)
-
+        If src.tolerance_m > 0 Then
+            Dim preTol = 0.00002 ' ~2m
+            baseGeom = TopologyPreservingSimplifier.Simplify(baseGeom, preTol)
+        End If
         ' ---------------------------------------------------------
         ' STEP 3 — Apply bbox/poly clip
         ' ---------------------------------------------------------

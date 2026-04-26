@@ -12,6 +12,30 @@ Public Module OsmLand
 
     Private ReadOnly _cache As New ConcurrentDictionary(Of String, NetTopologySuite.Geometries.Geometry)(StringComparer.OrdinalIgnoreCase)
 
+    ' Timestamp of the last Overpass request.
+    ' Used to enforce a minimum 1-second delay between requests.
+    Private Async Function FetchOSMObject(osmId As Long, osmType As String) As Task(Of JsonDocument)
+        ' Build Overpass query
+        Dim query As String = $"[out:json][timeout:300];{osmType}({osmId});(._;>;);out geom;"
+        Debug.WriteLine($"Sending {query} to OSM")
+
+        ' Encode query for URL
+        ' https://overpass.openstreetmap.fr/api/interpreter
+        ' https://overpass.kumi.systems/api/interpreter
+        ' https://overpass.nchc.org.tw/api/interpreter
+
+        Dim url As String = "https://overpass-api.de/api/interpreter?data=" & Uri.EscapeDataString(query)
+
+        ' Execute request using your existing HttpClient
+        Dim response As HttpResponseMessage = Await Http.GetAsync(url)
+        response.EnsureSuccessStatusCode()
+
+        ' Parse JSON
+        Dim stream = Await response.Content.ReadAsStreamAsync()
+        Debug.WriteLine($"FetchOSMOject: result={response.ReasonPhrase}, response of {stream.Length} bytes")
+        Await Task.Delay(1000) ' Enforce 1-second delay between requests
+        Return Await JsonDocument.ParseAsync(stream)
+    End Function
     Async Function ResolveOSM(osmId As Long, osmType As String) As Task(Of NetTopologySuite.Geometries.Geometry)
         ' Await the fetch
         Dim doc As JsonDocument = Await FetchOSMObject(osmId, osmType)
@@ -38,28 +62,6 @@ Public Module OsmLand
             Throw New Exception("Unsupported OSM type")
         End If
     End Function
-
-    ' Timestamp of the last Overpass request.
-    ' Used to enforce a minimum 1-second delay between requests.
-    Private Async Function FetchOSMObject(osmId As Long, osmType As String) As Task(Of JsonDocument)
-        ' Build Overpass query
-        Dim query As String = $"[out:json][timeout:300];{osmType}({osmId});(._;>;);out;"
-        Debug.WriteLine($"Sending {query} to OSM")
-
-        ' Encode query for URL
-        Dim url As String = "https://overpass.kumi.systems/api/interpreter?data=" & Uri.EscapeDataString(query)
-
-        ' Execute request using your existing HttpClient
-        Dim response As HttpResponseMessage = Await Http.GetAsync(url)
-        response.EnsureSuccessStatusCode()
-
-        ' Parse JSON
-        Dim stream = Await response.Content.ReadAsStreamAsync()
-        Debug.WriteLine($"FetchOSMOject: result={response.ReasonPhrase}, response of {stream.Length} bytes")
-        Await Task.Delay(1000) ' Enforce 1-second delay between requests
-        Return Await JsonDocument.ParseAsync(stream)
-    End Function
-
     Function BuildRelationPolygon(rel As JsonElement,
                               elements As JsonElement,
                               nodes As Dictionary(Of Long, Coordinate)) As NetTopologySuite.Geometries.Geometry
@@ -88,8 +90,8 @@ Public Module OsmLand
             Dim coords = r.ToArray()
             Dim ringarea = NetTopologySuite.Algorithm.Area.OfRing(coords)   ' signed area
             ringAreas.Add(ringarea)
-
-            linearRings.Add(gf.CreateLinearRing(coords))
+            Dim ring = gf.CreateLinearRing(coords)
+            linearRings.Add(ring)
         Next
 
         ' 3. Identify outer rings (CCW) and inner rings (CW)
@@ -185,73 +187,6 @@ Public Module OsmLand
         Return StitchWaysIntoRings(ways)
     End Function
 
-    Function StitchWaysIntoRings(ways As List(Of List(Of Coordinate))) As List(Of List(Of Coordinate))
-
-        Dim rings As New List(Of List(Of Coordinate))
-
-        ' Work on a mutable list
-        Dim remaining = ways.ToList()
-
-        While remaining.Count > 0
-
-            ' Start a new chain
-            Dim chain = New List(Of Coordinate)(remaining(0))
-            remaining.RemoveAt(0)
-
-            Dim extended As Boolean = True
-
-            While extended
-                extended = False
-
-                For i = remaining.Count - 1 To 0 Step -1
-                    Dim w = remaining(i)
-
-                    ' chain end → w start
-                    If chain.Last().Equals2D(w.First()) Then
-                        chain.AddRange(w.Skip(1))
-                        remaining.RemoveAt(i)
-                        extended = True
-                        Continue For
-                    End If
-
-                    ' chain end → w end (reverse w)
-                    If chain.Last().Equals2D(w.Last()) Then
-                        w.Reverse()
-                        chain.AddRange(w.Skip(1))
-                        remaining.RemoveAt(i)
-                        extended = True
-                        Continue For
-                    End If
-
-                    ' w end → chain start
-                    If w.Last().Equals2D(chain.First()) Then
-                        chain.InsertRange(0, w.Take(w.Count - 1))
-                        remaining.RemoveAt(i)
-                        extended = True
-                        Continue For
-                    End If
-
-                    ' w start → chain start (reverse w)
-                    If w.First().Equals2D(chain.First()) Then
-                        w.Reverse()
-                        chain.InsertRange(0, w.Take(w.Count - 1))
-                        remaining.RemoveAt(i)
-                        extended = True
-                        Continue For
-                    End If
-                Next
-            End While
-
-            ' If chain closes, store it as a ring
-            If chain.First().Equals2D(chain.Last()) Then
-                rings.Add(chain)
-            End If
-
-        End While
-
-        Return rings
-    End Function
-
     Function ExtractWayPoints(way As JsonElement,
                               nodes As Dictionary(Of Long, MapPoint)) As List(Of MapPoint)
 
@@ -266,8 +201,7 @@ Public Module OsmLand
     End Function
 
     Function ExtractWayPoints(way As JsonElement,
-                              nodes As Dictionary(Of Long, Coordinate)) _
-        As List(Of Coordinate)
+                              nodes As Dictionary(Of Long, Coordinate)) As List(Of Coordinate)
 
         Dim pts As New List(Of Coordinate)
 
@@ -328,6 +262,122 @@ Public Module OsmLand
         Next
 
         Return dict
+    End Function
+
+    Function StitchWaysIntoRings(ways As List(Of List(Of Coordinate))) As List(Of List(Of Coordinate))
+
+        ' Build node → list of ways index
+        Dim nodeToWays As New Dictionary(Of Coordinate, List(Of List(Of Coordinate)))(New CoordinateEqualityComparer)
+
+        For Each w In ways
+            For Each c In w
+                If Not nodeToWays.ContainsKey(c) Then
+                    nodeToWays(c) = New List(Of List(Of Coordinate))()
+                End If
+                nodeToWays(c).Add(w)
+            Next
+        Next
+
+        Dim rings As New List(Of List(Of Coordinate))()
+        Dim usedWays As New HashSet(Of List(Of Coordinate))()
+
+        ' Process each way as a potential starting point
+        For Each startWay In ways
+            If usedWays.Contains(startWay) Then Continue For
+
+            Dim ring As New List(Of Coordinate)(startWay)
+            usedWays.Add(startWay)
+
+            Dim extended As Boolean = True
+
+            While extended
+                extended = False
+
+                ' Try to extend at the end
+                Dim endNode = ring.Last()
+
+                If nodeToWays.ContainsKey(endNode) Then
+                    For Each w In nodeToWays(endNode)
+                        If usedWays.Contains(w) Then Continue For
+
+                        ' If the way starts at endNode
+                        If w.First().Equals2D(endNode) Then
+                            ring.AddRange(w.Skip(1))
+                            usedWays.Add(w)
+                            extended = True
+                            Exit For
+                        End If
+
+                        ' If the way ends at endNode → reverse it
+                        If w.Last().Equals2D(endNode) Then
+                            w.Reverse()
+                            ring.AddRange(w.Skip(1))
+                            usedWays.Add(w)
+                            extended = True
+                            Exit For
+                        End If
+
+                        ' If the way contains endNode in the middle → split it
+                        Dim idx = w.FindIndex(Function(c) c.Equals2D(endNode))
+                        If idx > 0 Then
+                            Dim tail = w.Skip(idx).ToList()
+                            ring.AddRange(tail.Skip(1))
+                            usedWays.Add(w)
+                            extended = True
+                            Exit For
+                        End If
+                    Next
+                End If
+
+                If extended Then Continue While
+
+                ' Try to extend at the start
+                Dim startNode = ring.First()
+
+                If nodeToWays.ContainsKey(startNode) Then
+                    For Each w In nodeToWays(startNode)
+                        If usedWays.Contains(w) Then Continue For
+
+                        ' If the way ends at startNode
+                        If w.Last().Equals2D(startNode) Then
+                            ring.InsertRange(0, w.Take(w.Count - 1))
+                            usedWays.Add(w)
+                            extended = True
+                            Exit For
+                        End If
+
+                        ' If the way starts at startNode → reverse it
+                        If w.First().Equals2D(startNode) Then
+                            w.Reverse()
+                            ring.InsertRange(0, w.Take(w.Count - 1))
+                            usedWays.Add(w)
+                            extended = True
+                            Exit For
+                        End If
+
+                        ' If the way contains startNode in the middle → split it
+                        Dim idx = w.FindIndex(Function(c) c.Equals2D(startNode))
+                        If idx > 0 Then
+                            Dim head = w.Take(idx + 1).ToList()
+                            ring.InsertRange(0, head.Take(head.Count - 1))
+                            usedWays.Add(w)
+                            extended = True
+                            Exit For
+                        End If
+                    Next
+                End If
+
+            End While
+
+            ' Close ring if needed
+            If Not ring.First().Equals2D(ring.Last()) Then
+                ring.Add(New Coordinate(ring.First().X, ring.First().Y))
+            End If
+
+            rings.Add(ring)
+        Next
+
+        Return rings
     End Function
 
 End Module

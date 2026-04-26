@@ -101,10 +101,11 @@ Module KMLExport
                 KMLBasicStyles(doc) ' add basic styles to document
                 KMLhover(doc)
 
+                Dim decimals = DecimalsForGeometry(dxcc.Geometry)   ' coordinate precision
                 Dim pm As New KmlPlacemark With {
                         .Name = entity,
                         .StyleUrl = $"#boundary_{(CInt(dxcc.Colour) Mod (ColourMapping.Length - 1)) + 1}",      ' assign style based on colour index
-                        .CoordinateDigits = 3
+                        .CoordinateDigits = decimals
                 }
                 pm.Geometry.Add(dxcc.Geometry)  ' the dxcc outline geometry
                 ' Add the extended data
@@ -117,8 +118,8 @@ Module KMLExport
                     .ExtendedData("IARU Region") = dxcc.IARU
                     .ExtendedData("Continent") = dxcc.Continent
                     .ExtendedData("Start Date") = dxcc.StartDate
-                    .ExtendedData("lat") = $"{dxcc.lat:f3}"
-                    .ExtendedData("lon") = $"{dxcc.lon:f3}"
+                    .ExtendedData("lat") = $"{FormatCoord(dxcc.lat, decimals)}"
+                    .ExtendedData("lon") = $"{FormatCoord(dxcc.lon, decimals)}"
 
                     Dim query As New StringBuilder()
                     If Not IsDBNullorEmpty(dxcc.source) Then query.Append($"{dxcc.source}:")
@@ -319,24 +320,24 @@ Module KMLExport
             KML.WriteLine(KMLheader)
             KML.WriteLine("<Style id="" boundary""><LineStyle><color>ffff0000</color><width>3</width></LineStyle><PolyStyle><color>7Fff0000</color></PolyStyle></Style>
 <Placemark><name>DXCC Map Of the World by VK3OHM</name>
-<description><![CDATA[Copyright: The Data included in this document Is from www.openstreetmap.org. The data Is made available under ODbL.
+<description><![CDATA[Copyright: The Data included in this document is from www.openstreetmap.org. The data is made available under ODbL.
     Data extraction by Marc Hillman (VK3OHM).<br><br>
 The main purpose of this data Is to display the boundaries of every DXCC entity. Adjacent entities have different colours.<br><br>
 There are some additional folders which are closed by default. You must open them to see the contents. They are:<br><br>
 <table border = 1 >
 <tr><th>Folder</th><th>Description</th></tr>
-<tr><td>DXCC Entities</td><td>Polygons displaying the boundaries Of all DXCC entities.</td></tr>
-<tr><td>Prefixes</td><td>The ARRL prefix For Each entity Is displayed In the center Of the entity.</td></tr>
-<tr><td>Grid Squares</td><td>The boundary Of every grid square that intersects With the land Of an entity Is displayed. The 4-character grid square code Is displayed In the center Of the grid square. This folder Is searchable, so you can use it To locate any grid square.</td></tr>
+<tr><td>DXCC Entities</td><td>Polygons displaying the boundaries of all DXCC entities.</td></tr>
+<tr><td>Prefixes</td><td>The ARRL prefix For Each entity is displayed In the center Of the entity.</td></tr>
+<tr><td>Grid Squares</td><td>The boundary of every grid square that intersects with the land Of an entity is displayed. The 4-character grid square code Is displayed In the center Of the grid square. This folder Is searchable, so you can use it To locate any grid square.</td></tr>
 <tr><td>IOTA</td><td>Island Groups For Islands On The Air (IOTA).</td></tr>
-<tr><td>CQ Zones</td><td>CQ magazine (now defunct) zones used For Worked All Zones (WAZ) award now administered by ARRL.(Based On data extracted from http://zone-check.eu/.)</td></tr>
-<tr><td>ITU Zones</td><td>International Telegraphic Union (ITU) zones. (Based On data extracted from http://zone-check.eu/.)</td></tr>
+<tr><td>CQ Zones</td><td>CQ magazine (now defunct) zones used For Worked All Zones (WAZ) award now administered by ARRL.(Based on data provided by IV3TMM)</td></tr>
+<tr><td>ITU Zones</td><td>International Telegraphic Union (ITU) zones. (Based on data provided by IV3TMM)</td></tr>
 <tr><td>IARU regions</td><td>International Amateur Radio Union (IARU) regions. (Using data created by Tim Makins (EI8IC))</td></tr>
 <tr><td>Timezones</td><td>World time zones</td></tr>
-<tr><td>Antarctic bases</td><td>Location And basic details Of Antarctic bases.</td></tr>
-<tr><td>Bounding boxes</td><td>To extract the entity data it was sometimes necessary To use a bounding box To filter the returned geometry. Open this folder will display those boxes. They are Not much use In normal operation, but are used For debugging.</td></tr>
+<tr><td>Antarctic bases</td><td>Location and basic details of Antarctic bases.</td></tr>
+<tr><td>Bounding boxes</td><td>To extract the entity data it was sometimes necessary to use a bounding box to filter the returned geometry. Open this folder will display those boxes. They are not much use in normal operation, but are used for debugging.</td></tr>
 </table>
-<br>A huge thank you To Peter Forbes (VK3QI) who used his extensive knowledge And awesome research skills To validate all the data.
+<br>A huge thank you To Peter Forbes (VK3QI) who used his extensive knowledge and awesome research skills To validate all the data.
 <br><br>Data created {Now:R}
 ]]>
 </description><gx:balloonVisibility> 1</gx:balloonVisibility></Placemark>")
@@ -434,8 +435,9 @@ There are some additional folders which are closed by default. You must open the
             kml.WriteLine($"<Data name=""IARU Region""><value>{SQLdr("IARU")}</value></Data>")
             kml.WriteLine($"<Data name=""Continent""><value>{SQLdr("Continent")}</value></Data>")
             kml.WriteLine($"<Data name=""Start Date""><value>{SQLdr("StartDate")}</value></Data>")
-            kml.WriteLine($"<Data name=""lat""><value>{SQLdr("lat"):f3}</value></Data>")
-            kml.WriteLine($"<Data name=""lon""><value>{SQLdr("lon"):f3}</value></Data>")
+            Dim decimals = DecimalsForGeometry(ntsGeom)
+            kml.WriteLine($"<Data name=""lat""><value>{FormatCoord(SafeDbl(SQLdr("lat")), decimals)}</value></Data>")
+            kml.WriteLine($"<Data name=""lon""><value>{FormatCoord(SafeDbl(SQLdr("lon")), decimals)}</value></Data>")
 
             Dim query As New StringBuilder()
             If Not IsDBNullorEmpty(SQLdr("source")) Then query.Append($"{SQLdr("source").ToString().Trim()}: ")
@@ -453,7 +455,7 @@ There are some additional folders which are closed by default. You must open the
             kml.WriteLine("</ExtendedData>")
             SQLdr.Close()
             ' --- Write polygon(s) ---
-            WriteKmlSingleOrMultiPolygon(ntsGeom, kml, 3)
+            WriteKmlSingleOrMultiPolygon(ntsGeom, kml, decimals)
 
             kml.WriteLine("</Placemark>")
         End Using
@@ -1788,10 +1790,10 @@ There is a rumour that many just use the 60 degrees of longitude line. They are 
     Sub WriteKmlSingleOrMultiPolygon(g As Geometry, kml As StreamWriter, decimals As Integer)
         If TypeOf g Is Polygon Then
             Dim pg = DirectCast(g, Polygon)
-            WriteKmlPolygon(pg, kml, 3)
+            WriteKmlPolygon(pg, kml, decimals)
         ElseIf TypeOf g Is MultiPolygon Then
             Dim mp = DirectCast(g, MultiPolygon)
-            WriteKmlMultiPolygon(mp, kml, 3)
+            WriteKmlMultiPolygon(mp, kml, decimals)
         Else
             Throw New Exception($"Unexpected geometry type {g.GeometryType}")
         End If
@@ -1889,6 +1891,20 @@ There is a rumour that many just use the 60 degrees of longitude line. They are 
         Return 6
 
     End Function
+
+    Function DecimalsForGeometry(g As Geometry) As Integer
+        Dim env = g.EnvelopeInternal
+        Dim dx = env.MaxX - env.MinX
+        Dim dy = env.MaxY - env.MinY
+        Dim extent = Math.Max(dx, dy)
+
+        If extent < 0.01 Then Return 7      ' < 1 km
+        If extent < 0.1 Then Return 6       ' < 10 km
+        If extent < 1 Then Return 5         ' < 100 km
+        If extent < 10 Then Return 4        ' < 1000 km
+        Return 3
+    End Function
+
     Public Function CreateDocument() As KmlDocument
         Return New KmlDocument()
     End Function
